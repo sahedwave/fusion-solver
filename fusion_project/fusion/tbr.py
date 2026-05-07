@@ -33,6 +33,7 @@ For the 3-group model:
 from __future__ import annotations
 import numpy as np
 from fusion.materials import FusionMaterial
+from fusion.mesh_utils import integrate_spatial
 
 
 def compute_tbr(
@@ -98,15 +99,14 @@ def compute_tbr(
 
     # Spatial tritium production rate: sum_g sigma_a[g] * phi[...,g]
     # sigma_a for Li4SiO4 encodes both (n,alpha) and (n,n'alpha) reactions
-    breeding_map = np.einsum('g,ijkg->ijk', li_material.sigma_a, phi)
+    breeding_map = np.tensordot(phi, li_material.sigma_a, axes=([-1], [0]))
 
     # Apply spatial mask (restrict to Li-bearing zone)
     if li_region_mask is not None:
         breeding_map = breeding_map * li_region_mask.astype(float)
 
     # Volume-integrate -> total T production rate [T-atoms/s]
-    vol_cell     = mesh.dx * mesh.dy * mesh.dz
-    T_production = float(breeding_map.sum()) * vol_cell
+    T_production = integrate_spatial(breeding_map, mesh)
 
     # Normalise by D-T source strength -> dimensionless TBR
     tbr = T_production / source_strength_val
