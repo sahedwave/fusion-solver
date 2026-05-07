@@ -13,6 +13,7 @@ from sn_core import (
     dt_source_spectrum,
     make_spectrum_source,
 )
+from mesh_builder import MeshBuilder
 from sn_multigroup import (
     MaterialXS,
     MultigroupLibrary,
@@ -82,6 +83,30 @@ def test_sources() -> None:
     lo = min(bounds_desc[idx], bounds_desc[idx + 1])
     hi = max(bounds_desc[idx], bounds_desc[idx + 1])
     _check("D-T group contains 14.1 MeV", lo <= 14.1e6 <= hi)
+
+
+def test_spectrum_source_conservation_structured_unstructured() -> None:
+    spectrum = np.array([0.2, 0.3, 0.5], dtype=np.float64)
+    strength = 4.2
+
+    # Structured reference.
+    mesh_s = Mesh(4, 3, 2, 0.5, 0.75, 1.25)
+    Qs = make_spectrum_source(mesh_s, spectrum, strength=strength, geometry="gaussian")
+    vol_s = mesh_s.dx * mesh_s.dy * mesh_s.dz
+    _check("structured spectrum shape", Qs.shape == (mesh_s.nx, mesh_s.ny, mesh_s.nz, spectrum.size))
+    _check("structured source conservation", abs(float(np.sum(Qs) * vol_s) - strength) < 1.0e-12)
+
+    # Cartesian-converted unstructured.
+    mesh_c = MeshBuilder.from_cartesian(mesh_s)
+    Qc = make_spectrum_source(mesh_c, spectrum, strength=strength, geometry="volumetric", plasma_fraction=0.35)
+    _check("from_cartesian spectrum shape", Qc.shape == (mesh_c.N_cells, spectrum.size))
+    _check("from_cartesian source conservation", abs(float(np.sum(Qc * mesh_c.cell_volume[:, None])) - strength) < 1.0e-12)
+
+    # General tet mesh.
+    mesh_t = MeshBuilder.tet_box(4, 3, 2, 1.0, 1.0, 1.0)
+    Qt = make_spectrum_source(mesh_t, spectrum, strength=strength, geometry="point")
+    _check("tet_box spectrum shape", Qt.shape == (mesh_t.N_cells, spectrum.size))
+    _check("tet_box source conservation", abs(float(np.sum(Qt * mesh_t.cell_volume[:, None])) - strength) < 1.0e-12)
 
 
 def _solver_smoke(G: int) -> None:

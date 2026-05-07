@@ -232,6 +232,12 @@ def _step_cell_unstructured(
     sigma_t: float,
     vol: float,
 ) -> tuple[float, float]:
+    """Face-balance step-characteristic-like update for unstructured cells.
+
+    This update is conservative for the per-cell balance equation but is not
+    algebraically equivalent to the Cartesian diamond-difference `_step_cell()`
+    update, even on cuboid meshes converted through `MeshBuilder.from_cartesian`.
+    """
     inflow_sum = float(np.dot(psi_inflow, inflow_areas_cos)) if psi_inflow.size else 0.0
     denom = sigma_t * vol + outflow_area_cos_sum
     if denom <= 0.0 or not np.isfinite(denom):
@@ -241,12 +247,6 @@ def _step_cell_unstructured(
         return 0.0, 0.0
     psi_cell = max(float(psi_cell), 0.0)
     return psi_cell, psi_cell
-
-
-def _cartesian_proxy_from_unstructured(mesh: UnstructuredMesh):
-    if mesh.cartesian_shape is None or mesh.cartesian_spacing is None:
-        return None
-    return Mesh(*mesh.cartesian_shape, *mesh.cartesian_spacing)
 
 
 def _sweep_one_direction_group_unstructured(
@@ -261,18 +261,6 @@ def _sweep_one_direction_group_unstructured(
     refl_map:      Dict[str, np.ndarray],
     sweep_order:   np.ndarray,
 ) -> None:
-    # Cartesian-converted meshes preserve the legacy diamond-difference sweep exactly.
-    cart = _cartesian_proxy_from_unstructured(mesh)
-    if cart is not None:
-        nx, ny, nz = mesh.cartesian_shape
-        mu, eta, xi = direction
-        _sweep_one_direction_group(
-            psi_ang.reshape(nx, ny, nz, psi_ang.shape[-2], psi_ang.shape[-1]),
-            direction_idx, group, abs(mu), abs(eta), abs(xi), mu, eta, xi,
-            cart, sigma_t_g, q_cell_g.reshape(nx, ny, nz), bc, refl_map,
-        )
-        return
-
     m, g = direction_idx, group
     face_flux: dict[int, float] = {}
     q_per_sr = np.asarray(q_cell_g, dtype=np.float64) * (1.0 / (4.0 * np.pi))
@@ -507,10 +495,7 @@ class SystemOperator:
 
         # ── 2. Zero: P1 seed J = 0  (no history) ─────────────────────
         self.T.psi_ang[:] = 0.0
-        J_zero = np.zeros(
-            (self.T.mesh.nx, self.T.mesh.ny, self.T.mesh.nz, self.T.mat.G, 3),
-            dtype=np.float64,
-        )
+        J_zero = np.zeros(phi.shape + (3,), dtype=np.float64)
 
         # ── 3. One transport sweep ────────────────────────────────────
         # T.sweep owns scattering-source construction; passing pre-scattered
@@ -568,11 +553,15 @@ class DSAPreconditioner:
         mat:  P1Material,
         bc:   BoundaryConditions,
         verbose: bool = False,
+        eta: float = 4.0,
     ) -> None:
         self.mesh    = mesh
         self.mat     = mat
         self.bc      = bc
         self.verbose = verbose
+        self.eta     = float(eta)
+        if self.eta <= 0.0:
+            raise ValueError("DSA SIP penalty eta must be positive")
         self._A      = self._assemble(mesh, mat, bc)
 
     # ------------------------------------------------------------------
@@ -598,7 +587,7 @@ class DSAPreconditioner:
         bc:   BoundaryConditions,
     ):
         if isinstance(mesh, UnstructuredMesh):
-            return self._assemble_unstructured(mesh, mat, bc)
+            return self._assemble_unstructured(mesh, mat, bc, self.eta)
         return self._assemble_cartesian(mesh, mat, bc)
 
     def _assemble_cartesian(self, mesh: Mesh, mat: P1Material, bc: BoundaryConditions):
@@ -654,7 +643,7 @@ class DSAPreconditioner:
                         A[row, row] = diag
         return A
 
-    def _assemble_unstructured(self, mesh: UnstructuredMesh, mat: P1Material, bc: BoundaryConditions):
+    def _assemble_unstructured(self, mesh: UnstructuredMesh, mat: P1Material, bc: BoundaryConditions, eta: float):
         G = mat.G
         N = mesh.N_cells * G
         A = lil_matrix((N, N), dtype=np.float64)
@@ -669,10 +658,12 @@ class DSAPreconditioner:
             if cR == -1:
                 continue
             area = float(mesh.face_area[f])
-            hf = (float(mesh.cell_volume[cL]) + float(mesh.cell_volume[cR])) / (2.0 * area)
+            hL = 3.0 * float(mesh.cell_volume[cL]) / area
+            hR = 3.0 * float(mesh.cell_volume[cR]) / area
+            hF = 0.5 * (hL + hR)
             for g in range(G):
                 Dg = float(D[g])
-                coeff = Dg * area / hf
+                coeff = (1.0 + eta) * Dg * area / hF
                 rowL, rowR = idx(cL, g), idx(cR, g)
                 A[rowL, rowL] += coeff
                 A[rowR, rowR] += coeff
@@ -689,8 +680,8 @@ class DSAPreconditioner:
                     if f not in boundary:
                         continue
                     area = float(mesh.face_area[f])
-                    hf = float(mesh.cell_volume[c]) / area
-                    A[row, row] += 2.0 * float(D[g]) * area / hf
+                    hB = 3.0 * float(mesh.cell_volume[c]) / area
+                    A[row, row] += (2.0 + eta) * float(D[g]) * area / hB
         return A
 
 

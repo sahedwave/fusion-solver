@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from sn_core import Mesh
 from mesh_builder import MeshBuilder
@@ -47,3 +48,40 @@ def test_boundary_face_accounting():
     tagged = sum(len(v) for v in mesh.boundary_faces.values())
     actual = int(np.count_nonzero(mesh.face_to_cells[:, 1] == -1))
     assert tagged == actual
+
+
+def test_from_gmsh_physical_boundary_mapping(tmp_path):
+    meshio = pytest.importorskip("meshio")
+
+    points = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [0.0, 1.0, 1.0],
+    ], dtype=float)
+    hexes = np.array([[0, 1, 2, 3, 4, 5, 6, 7]], dtype=int)
+    # xmin and xmax quad surfaces with distinct physical tags
+    xmin = np.array([[0, 3, 7, 4]], dtype=int)
+    xmax = np.array([[1, 2, 6, 5]], dtype=int)
+
+    msh = meshio.Mesh(
+        points=points,
+        cells=[("hexahedron", hexes), ("quad", xmin), ("quad", xmax)],
+        cell_data={"gmsh:physical": [np.array([1]), np.array([11]), np.array([22])]},
+    )
+    path = tmp_path / "two_tags_box.msh"
+    meshio.write(path, msh, file_format="gmsh22")
+
+    mesh = MeshBuilder.from_gmsh(path, boundary_tags={"xmin": 11, "xmax": 22})
+
+    xmin_faces = np.sort(mesh.boundary_faces["xmin"])
+    xmax_faces = np.sort(mesh.boundary_faces["xmax"])
+    assert xmin_faces.size > 0
+    assert xmax_faces.size > 0
+    assert not np.array_equal(xmin_faces, xmax_faces)
+    assert "unassigned" in mesh.boundary_faces
+    assert mesh.boundary_faces["unassigned"].size > 0
