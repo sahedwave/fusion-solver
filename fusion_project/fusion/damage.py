@@ -27,6 +27,7 @@ Reference: Norgett, Robinson, Torrens, Nucl. Eng. Des. 33 (1975) 50-54.
 from __future__ import annotations
 import numpy as np
 from fusion.materials import FusionMaterial
+from fusion.mesh_utils import integrate_spatial
 
 
 def compute_dpa(
@@ -63,7 +64,7 @@ def compute_dpa(
     Thermal neutrons have much lower DPA cross-sections.
     """
     _check_groups(phi, material)
-    return np.einsum('g,ijkg->ijk', material.sigma_dpa, phi)
+    return np.tensordot(phi, material.sigma_dpa, axes=([-1], [0]))
 
 
 def compute_group_dpa(
@@ -83,7 +84,7 @@ def compute_group_dpa(
     different spatial regions.
     """
     _check_groups(phi, material)
-    return material.sigma_dpa[np.newaxis, np.newaxis, np.newaxis, :] * phi
+    return material.sigma_dpa.reshape((1,) * (phi.ndim - 1) + (-1,)) * phi
 
 
 def integrate_dpa(
@@ -101,9 +102,8 @@ def integrate_dpa(
     float : total displacements / s (integrated over domain volume)
     """
     _check_groups(phi, material)
-    DPA  = compute_dpa(phi, material)
-    vol  = mesh.dx * mesh.dy * mesh.dz
-    return float(DPA.sum()) * vol
+    DPA = compute_dpa(phi, material)
+    return integrate_spatial(DPA, mesh)
 
 
 def peak_dpa(

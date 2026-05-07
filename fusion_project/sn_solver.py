@@ -15,6 +15,7 @@ from typing import Optional
 from sn_core import (
     Mesh, P1Material, BoundaryConditions,
 )
+from mesh_builder import UnstructuredMesh
 from sn_operators import (
     TransportOperator, ScatteringOperator,
     SystemOperator, DSAPreconditioner,
@@ -46,12 +47,32 @@ class SolverResult:
     positivity_diagnostics: dict = field(default_factory=dict)
 
 
+def _mesh_flux_shape(mesh, G: int) -> tuple[int, ...]:
+    if isinstance(mesh, UnstructuredMesh):
+        return (mesh.N_cells, G)
+    return (mesh.nx, mesh.ny, mesh.nz, G)
+
+
+def _mesh_j_shape(mesh, G: int) -> tuple[int, ...]:
+    return _mesh_flux_shape(mesh, G) + (3,)
+
+
+def _mesh_unknowns(mesh, G: int) -> int:
+    return (mesh.N_cells if isinstance(mesh, UnstructuredMesh) else mesh.nx * mesh.ny * mesh.nz) * G
+
+
+def _cell_volumes_for(phi: np.ndarray, mesh) -> np.ndarray:
+    if isinstance(mesh, UnstructuredMesh):
+        return mesh.cell_volume.reshape((mesh.N_cells,) + (1,) * (phi.ndim - 1))
+    return np.asarray(mesh.dx * mesh.dy * mesh.dz)
+
+
 def _positivity_diagnostics(phi_raw: np.ndarray, mesh: Mesh) -> tuple[np.ndarray, dict]:
     negative = phi_raw < 0.0
     clipped = np.where(negative, -phi_raw, 0.0)
-    vol = mesh.dx * mesh.dy * mesh.dz
-    clipped_integral = float(clipped.sum()) * vol
-    raw_abs_integral = float(np.abs(phi_raw).sum()) * vol
+    vols = _cell_volumes_for(clipped, mesh)
+    clipped_integral = float(np.sum(clipped * vols))
+    raw_abs_integral = float(np.sum(np.abs(phi_raw) * vols))
     diagnostics = {
         "negative_flux_before_floor": float(phi_raw.min()) if phi_raw.size else 0.0,
         "negative_cell_count": int(np.count_nonzero(negative)),
@@ -94,7 +115,7 @@ def consistency_sweep(
 ) -> SolverResult:
     """Single sweep from zero — useful for operator checks."""
     T, S, A, _ = build_operators(mesh, mat, Q_ext, directions, weights, bc, refl_map)
-    phi0 = np.zeros((mesh.nx, mesh.ny, mesh.nz, mat.G))
+    phi0 = np.zeros(_mesh_flux_shape(mesh, mat.G))
     phi_new, J_new = A.apply_phi_new(phi0)
     return SolverResult(
         phi=phi_new, J=J_new, psi=T.psi_ang.copy(),
@@ -121,7 +142,7 @@ def solve_source_iteration(
 
     T, S, A, _ = build_operators(mesh, mat, Q_ext, directions, weights, bc, refl_map)
 
-    phi = np.zeros((mesh.nx, mesh.ny, mesh.nz, mat.G))
+    phi = np.zeros(_mesh_flux_shape(mesh, mat.G))
     residuals = []
 
     for it in range(max_iter):
@@ -137,7 +158,7 @@ def solve_source_iteration(
         if res < tol:
             break
 
-    J_zero = np.zeros((mesh.nx, mesh.ny, mesh.nz, mat.G, 3))
+    J_zero = np.zeros(_mesh_j_shape(mesh, mat.G))
     T.reset_psi()
     psi_final, phi_final, J_final = T.sweep(Q_ext, phi, J_zero)
     phi_final, positivity = _positivity_diagnostics(phi_final, mesh)
@@ -167,18 +188,18 @@ def solve_gmres_dsa(
 
     T, S, A, P = build_operators(mesh, mat, Q_ext, directions, weights, bc, refl_map)
 
-    phi = np.zeros((mesh.nx, mesh.ny, mesh.nz, mat.G))
+    phi = np.zeros(_mesh_flux_shape(mesh, mat.G))
     G   = mat.G
     N   = mesh.nx * mesh.ny * mesh.nz * G
     residuals      = []
     n_gmres_total  = 0
 
     def matvec(x_flat):
-        phi_x = x_flat.reshape(mesh.nx, mesh.ny, mesh.nz, G)
+        phi_x = x_flat.reshape(shape)
         return A.apply(phi_x).reshape(N)
 
     def precond(r_flat):
-        r_phi = r_flat.reshape(mesh.nx, mesh.ny, mesh.nz, G)
+        r_phi = r_flat.reshape(shape)
         return P.apply(r_phi).reshape(N)
 
     from scipy.sparse.linalg import LinearOperator, gmres as sp_gmres
@@ -192,7 +213,7 @@ def solve_gmres_dsa(
     # In the form A·φ = b:  (I - T·S)·φ = T·Q_ext
     # Compute b = T·Q_ext by one sweep with zero scattering source.
     phi_zero = np.zeros_like(phi)
-    J_zero   = np.zeros((mesh.nx, mesh.ny, mesh.nz, G, 3))
+    J_zero   = np.zeros(_mesh_j_shape(mesh, G))
     _, b_phi, _ = T.sweep(Q_ext, phi_zero, J_zero)
     T.reset_psi()                        # reset for proper GMRES start
     b = b_phi.reshape(N)
@@ -216,7 +237,7 @@ def solve_gmres_dsa(
         n_gmres_total += iters_this_call[0]
         iters_this_call[0] = 0
 
-        phi_new = sol.reshape(mesh.nx, mesh.ny, mesh.nz, G)
+        phi_new = sol.reshape(shape)
         norm_new = np.linalg.norm(phi_new)
         if norm_new < 1e-30:
             phi = phi_new
@@ -232,7 +253,7 @@ def solve_gmres_dsa(
         if info == 0 and res < cfg.tol:
             break
 
-    J_zero = np.zeros((mesh.nx, mesh.ny, mesh.nz, G, 3))
+    J_zero = np.zeros(_mesh_j_shape(mesh, G))
     T.reset_psi()
     psi_final, phi_final, J_final = T.sweep(Q_ext, phi, J_zero)
     phi_final, positivity = _positivity_diagnostics(phi_final, mesh)
