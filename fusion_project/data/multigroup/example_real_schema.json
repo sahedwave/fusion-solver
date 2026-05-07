@@ -1,0 +1,35 @@
+{
+  "energy_bounds": [20000000.0, 1000000.0, 1e-5],
+  "metadata": {
+    "description": "Mock real-library schema example. Values are placeholders, not nuclear design data.",
+    "units": {
+      "energy_bounds": "eV",
+      "cross_sections": "cm^-1",
+      "heating": "MeV per reaction"
+    },
+    "provenance": "mock schema only"
+  },
+  "materials": {
+    "mock_steel": {
+      "name": "Mock steel material",
+      "sigma_t": [0.72, 1.05],
+      "sigma_s0": [
+        [0.42, 0.12],
+        [0.01, 0.58]
+      ],
+      "sigma_s1": [
+        [0.05, 0.01],
+        [0.0, 0.03]
+      ],
+      "reactions": {
+        "absorption": [0.18, 0.46],
+        "damage": [0.04, 0.005]
+      },
+      "heating": [5.2, 0.8],
+      "metadata": {
+        "mock": true,
+        "density_g_cm3": 7.8
+      }
+    }
+  }
+}
