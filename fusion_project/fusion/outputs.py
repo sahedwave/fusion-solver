@@ -17,6 +17,7 @@ Required output formats (per spec):
 
 from __future__ import annotations
 import numpy as np
+from fusion.mesh_utils import integrate_spatial
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -192,7 +193,6 @@ class FusionResults:
             raise ValueError(
                 "integrate() requires a mesh.  Pass mesh= or set self.mesh."
             )
-        vol_cell = m.dx * m.dy * m.dz
 
         named = {
             "reaction_rate": self.reaction_rate,
@@ -202,7 +202,7 @@ class FusionResults:
             "breeding_map": self.breeding_map,
         }
         if field in named:
-            return float(named[field].sum()) * vol_cell
+            return integrate_spatial(named[field], m)
 
         # phi_g{g} — group-resolved flux integral
         if field.startswith("phi_g"):
@@ -214,7 +214,7 @@ class FusionResults:
                 raise ValueError(
                     f"Group index {g} out of range for phi with G={self.phi.shape[-1]}."
                 )
-            return float(self.phi[:, :, :, g].sum()) * vol_cell
+            return integrate_spatial(self.phi[..., g], m)
 
         raise ValueError(
             f"Unknown field '{field}'. Choose from: "
@@ -297,7 +297,7 @@ class FusionResults:
         bool : True if export succeeded, False if pyevtk is not installed.
         """
         try:
-            from pyevtk.hl import gridToVTK
+            from pyevtk.hl import gridToVTK, unstructuredGridToVTK
         except ImportError:
             print(
                 "  [VTK] pyevtk not installed. Skipping VTK export.\n"
@@ -309,27 +309,36 @@ class FusionResults:
             print("  [VTK] No mesh attached to FusionResults. Cannot export VTK.")
             return False
 
-        mesh  = self.mesh
-        nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
+        mesh = self.mesh
 
+        def _f(arr):
+            return np.asfortranarray(np.asarray(arr, dtype=np.float64))
+
+        cell_data = {
+            "reaction_rate": _f(self.reaction_rate),
+            "heating_W_cm3": _f(self.heating_W),
+            "dpa_rate": _f(self.dpa_rate),
+            "breeding_map": _f(self.breeding_map),
+        }
+        for g in range(self.phi.shape[-1]):
+            cell_data[f"phi_g{g}"] = _f(self.phi[..., g])
+
+        if hasattr(mesh, "N_cells"):
+            connectivity = np.concatenate([np.asarray(c, dtype=np.int64) for c in mesh.cell_nodes])
+            offsets = np.cumsum([len(c) for c in mesh.cell_nodes]).astype(np.int64)
+            cell_types = np.asarray([10 if len(c) == 4 else 12 for c in mesh.cell_nodes], dtype=np.uint8)
+            unstructuredGridToVTK(
+                path, mesh.nodes[:, 0], mesh.nodes[:, 1], mesh.nodes[:, 2],
+                connectivity=connectivity, offsets=offsets, cell_types=cell_types,
+                cellData=cell_data,
+            )
+            print(f"  [VTK] Exported to {path}.vtu")
+            return True
+
+        nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
         x = np.linspace(0.0, nx * mesh.dx, nx + 1)
         y = np.linspace(0.0, ny * mesh.dy, ny + 1)
         z = np.linspace(0.0, nz * mesh.dz, nz + 1)
-
-        # pyevtk requires Fortran-contiguous float64 arrays
-        def _f(arr):
-            return np.asfortranarray(arr.astype(np.float64))
-
-        point_data = {}
-        cell_data  = {
-            "reaction_rate":  _f(self.reaction_rate),
-            "heating_W_cm3":  _f(self.heating_W),
-            "dpa_rate":       _f(self.dpa_rate),
-            "breeding_map":   _f(self.breeding_map),
-        }
-        for g in range(self.phi.shape[-1]):
-            cell_data[f"phi_g{g}"] = _f(self.phi[:, :, :, g])
-
         gridToVTK(path, x, y, z, cellData=cell_data)
         print(f"  [VTK] Exported to {path}.vts")
         return True

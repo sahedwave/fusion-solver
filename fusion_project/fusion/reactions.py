@@ -16,6 +16,7 @@ calculation can call it independently.
 from __future__ import annotations
 import numpy as np
 from fusion.materials import FusionMaterial
+from fusion.mesh_utils import integrate_spatial
 
 
 def compute_reaction_rate(
@@ -46,7 +47,7 @@ def compute_reaction_rate(
     Must scale linearly with flux magnitude (Test 1 in test_phase8.py).
     """
     _check_groups(phi, material)
-    return np.einsum('g,ijkg->ijk', material.sigma_a, phi)
+    return np.tensordot(phi, material.sigma_a, axes=([-1], [0]))
 
 
 def compute_group_reaction_rates(
@@ -63,7 +64,7 @@ def compute_group_reaction_rates(
     R_g : np.ndarray, shape (nx, ny, nz, G)   [reactions/cm^3/s/group]
     """
     _check_groups(phi, material)
-    return material.sigma_a[np.newaxis, np.newaxis, np.newaxis, :] * phi
+    return material.sigma_a.reshape((1,) * (phi.ndim - 1) + (-1,)) * phi
 
 
 def integrate_reaction_rate(
@@ -85,9 +86,8 @@ def integrate_reaction_rate(
     vacuum boundary conditions.
     """
     _check_groups(phi, material)
-    R   = compute_reaction_rate(phi, material)
-    vol = mesh.dx * mesh.dy * mesh.dz
-    return float(R.sum()) * vol
+    R = compute_reaction_rate(phi, material)
+    return integrate_spatial(R, mesh)
 
 
 # ================================================================
