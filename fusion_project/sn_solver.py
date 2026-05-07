@@ -190,7 +190,8 @@ def solve_gmres_dsa(
 
     phi = np.zeros(_mesh_flux_shape(mesh, mat.G))
     G   = mat.G
-    N   = mesh.nx * mesh.ny * mesh.nz * G
+    shape = _mesh_flux_shape(mesh, G)
+    N   = _mesh_unknowns(mesh, G)
     residuals      = []
     n_gmres_total  = 0
 

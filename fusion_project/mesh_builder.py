@@ -204,9 +204,59 @@ class MeshBuilder:
         if not cells:
             raise ValueError("Gmsh file contains no tetrahedral or hexahedral volume cells")
         mesh = UnstructuredMesh(nodes=nodes, cell_nodes=cells, cell_type=np.asarray(types, dtype=np.int64))
-        # Physical surface tags vary by meshio version; keep all boundary faces and expose requested names if present.
-        boundary = np.nonzero(mesh.face_to_cells[:, 1] == -1)[0].astype(np.int64)
-        tags = {name: boundary.copy() for name in boundary_tags} or {"boundary": boundary}
+
+        surface_types = {"triangle", "quad"}
+        surface_node_keys: dict[tuple[int, ...], int] = {}
+
+        # Support both meshio cell_data layout variants.
+        physical_by_name = msh.cell_data.get("gmsh:physical", None)
+        if physical_by_name is None and "gmsh:physical" in msh.cell_data_dict:
+            # Convert dict[type->array] to block-aligned list.
+            by_type = msh.cell_data_dict["gmsh:physical"]
+            physical_by_name = [np.asarray(by_type.get(block.type, np.full(len(block.data), -1)), dtype=np.int64) for block in msh.cells]
+
+        for ib, block in enumerate(msh.cells):
+            if block.type not in surface_types:
+                continue
+            if physical_by_name is None:
+                tags = np.full(len(block.data), -1, dtype=np.int64)
+            else:
+                tags = np.asarray(physical_by_name[ib], dtype=np.int64)
+            for row, tag in zip(block.data, tags):
+                surface_node_keys[tuple(sorted(int(n) for n in row))] = int(tag)
+
+        _, face_node_ids, _ = build_face_connectivity(mesh.cell_nodes)
+        boundary_faces = np.nonzero(mesh.face_to_cells[:, 1] == -1)[0].astype(np.int64)
+        boundary_by_tag: dict[int, list[int]] = {}
+        unassigned: list[int] = []
+        for f in boundary_faces:
+            key = tuple(sorted(int(n) for n in face_node_ids[int(f)]))
+            tag = surface_node_keys.get(key, None)
+            if tag is None or tag < 0:
+                unassigned.append(int(f))
+            else:
+                boundary_by_tag.setdefault(int(tag), []).append(int(f))
+
+        tags: dict[str, np.ndarray] = {}
+        for name, physical_tag in boundary_tags.items():
+            arr = np.asarray(boundary_by_tag.get(int(physical_tag), []), dtype=np.int64)
+            if arr.size == 0:
+                raise ValueError(f"Requested boundary tag '{name}'={physical_tag} has no matched faces")
+            tags[name] = arr
+
+        # Enforce distinct named groups when multiple unique physical tags requested.
+        req_vals = list(boundary_tags.values())
+        if len(set(req_vals)) > 1:
+            for i, ni in enumerate(boundary_tags):
+                for j, nj in enumerate(boundary_tags):
+                    if j <= i:
+                        continue
+                    if boundary_tags[ni] != boundary_tags[nj] and np.array_equal(np.sort(tags[ni]), np.sort(tags[nj])):
+                        raise ValueError(f"Boundary groups '{ni}' and '{nj}' map to identical face sets")
+
+        if unassigned:
+            tags["unassigned"] = np.asarray(unassigned, dtype=np.int64)
+
         return UnstructuredMesh(
             nodes=mesh.nodes, cell_nodes=mesh.cell_nodes, cell_type=mesh.cell_type,
             cell_volume=mesh.cell_volume, cell_centroid=mesh.cell_centroid,

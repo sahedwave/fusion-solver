@@ -160,7 +160,7 @@ def make_uniform_source(mesh: Mesh, G: int, strength: float = 1.0) -> np.ndarray
     return np.full((mesh.nx, mesh.ny, mesh.nz, G), strength, dtype=np.float64)
 
 
-def _spatial_source_shape(
+def _spatial_source_shape_structured(
     mesh: Mesh,
     geometry: str,
     plasma_fraction: float = 0.25,
@@ -198,8 +198,49 @@ def _spatial_source_shape(
     return shape
 
 
+def _spatial_source_shape_unstructured(
+    mesh,
+    geometry: str,
+    plasma_fraction: float = 0.25,
+    gaussian_sigma_cm: float | None = None,
+) -> np.ndarray:
+    centroids = np.asarray(mesh.cell_centroid, dtype=np.float64)
+    volumes = np.asarray(mesh.cell_volume, dtype=np.float64)
+    if centroids.ndim != 2 or centroids.shape[1] != 3:
+        raise ValueError(f"mesh.cell_centroid must have shape (N_cells, 3), got {centroids.shape}")
+    if volumes.shape != (centroids.shape[0],):
+        raise ValueError(f"mesh.cell_volume must have shape ({centroids.shape[0]},), got {volumes.shape}")
+    if np.any(volumes <= 0.0) or not np.all(np.isfinite(volumes)):
+        raise ValueError("mesh.cell_volume entries must be positive and finite")
+
+    N = centroids.shape[0]
+    shape = np.zeros(N, dtype=np.float64)
+    center = centroids.mean(axis=0)
+    r = np.linalg.norm(centroids - center[None, :], axis=1)
+    if geometry == "point":
+        shape[int(np.argmin(r))] = 1.0
+    elif geometry == "volumetric":
+        frac = float(plasma_fraction)
+        if frac <= 0.0 or not math.isfinite(frac):
+            raise ValueError(f"plasma_fraction must be positive and finite, got {plasma_fraction}")
+        threshold = np.quantile(r, min(max(frac, 1.0 / max(N, 1)), 1.0))
+        shape[r <= threshold] = 1.0
+    elif geometry == "gaussian":
+        if gaussian_sigma_cm is None:
+            extent = np.max(np.linalg.norm(centroids - center[None, :], axis=1))
+            gaussian_sigma_cm = max(0.15 * extent, 1.0e-12)
+        if gaussian_sigma_cm <= 0.0 or not math.isfinite(gaussian_sigma_cm):
+            raise ValueError(f"gaussian_sigma_cm must be positive and finite, got {gaussian_sigma_cm}")
+        shape = np.exp(-(r ** 2) / (2.0 * gaussian_sigma_cm ** 2))
+    else:
+        raise ValueError(f"unknown source geometry {geometry!r}")
+    if shape.sum() <= 0.0:
+        raise ValueError(f"source geometry {geometry!r} produced zero support")
+    return shape
+
+
 def make_spectrum_source(
-    mesh: Mesh,
+    mesh,
     spectrum: np.ndarray,
     strength: float = 1.0,
     geometry: str = "point",
@@ -218,9 +259,15 @@ def make_spectrum_source(
         raise ValueError(f"strength must be positive and finite, got {strength}")
 
     spectrum = spectrum / total
-    shape = _spatial_source_shape(mesh, geometry, plasma_fraction, gaussian_sigma_cm)
+    if hasattr(mesh, "N_cells"):
+        shape = _spatial_source_shape_unstructured(mesh, geometry, plasma_fraction, gaussian_sigma_cm)
+        volumes = np.asarray(mesh.cell_volume, dtype=np.float64)
+        spatial_density = shape / max(float(np.sum(shape * volumes)), 1.0e-300)
+        return strength * spatial_density[:, np.newaxis] * spectrum[np.newaxis, :]
+
+    shape = _spatial_source_shape_structured(mesh, geometry, plasma_fraction, gaussian_sigma_cm)
     vol = mesh.dx * mesh.dy * mesh.dz
-    spatial_density = shape / (shape.sum() * vol)
+    spatial_density = shape / max(float(shape.sum() * vol), 1.0e-300)
     return strength * spatial_density[:, :, :, np.newaxis] * spectrum[np.newaxis, np.newaxis, np.newaxis, :]
 
 
