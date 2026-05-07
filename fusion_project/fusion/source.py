@@ -37,6 +37,7 @@ NO solver internals are touched or imported here.
 
 from __future__ import annotations
 import numpy as np
+from fusion.mesh_utils import integrate_spatial
 from sn_core import dt_source_spectrum, make_spectrum_source
 
 
@@ -180,5 +181,4 @@ def source_strength(Q_ext: np.ndarray, mesh) -> float:
     -------
     float : total neutrons / s
     """
-    vol_cell = mesh.dx * mesh.dy * mesh.dz
-    return float(Q_ext.sum()) * vol_cell
+    return integrate_spatial(np.sum(Q_ext, axis=-1), mesh)

@@ -138,6 +138,12 @@ def make_point_source(
     if strength <= 0.0 or not math.isfinite(strength):
         raise ValueError(f"strength must be positive and finite, got {strength}")
 
+    if hasattr(mesh, "N_cells"):
+        Q = np.zeros((mesh.N_cells, G), dtype=np.float64)
+        c = int(np.argmin(np.linalg.norm(mesh.cell_centroid - mesh.cell_centroid.mean(axis=0), axis=1)))
+        Q[c, group] = strength / float(mesh.cell_volume[c])
+        return Q
+
     Q = np.zeros((mesh.nx, mesh.ny, mesh.nz, G), dtype=np.float64)
     vol = mesh.dx * mesh.dy * mesh.dz
     Q[mesh.nx // 2, mesh.ny // 2, mesh.nz // 2, group] = strength / vol
@@ -149,6 +155,8 @@ def make_uniform_source(mesh: Mesh, G: int, strength: float = 1.0) -> np.ndarray
         raise ValueError(f"G must be positive, got {G}")
     if strength <= 0.0 or not math.isfinite(strength):
         raise ValueError(f"strength must be positive and finite, got {strength}")
+    if hasattr(mesh, "N_cells"):
+        return np.full((mesh.N_cells, G), strength, dtype=np.float64)
     return np.full((mesh.nx, mesh.ny, mesh.nz, G), strength, dtype=np.float64)
 
 
@@ -299,14 +307,14 @@ def _validate_moment_inputs(
     directions = np.asarray(directions)
     weights = np.asarray(weights)
 
-    if psi_ang.ndim != 5:
-        raise ValueError(f"psi_ang must have shape (nx, ny, nz, n_dir, G), got {psi_ang.shape}")
+    if psi_ang.ndim not in (3, 5):
+        raise ValueError(f"psi_ang must have shape (..., n_dir, G), got {psi_ang.shape}")
     if directions.ndim != 2 or directions.shape[1] != 3:
         raise ValueError(f"directions must have shape (n_dir, 3), got {directions.shape}")
     if weights.ndim != 1:
         raise ValueError(f"weights must have shape (n_dir,), got {weights.shape}")
 
-    n_dir = psi_ang.shape[3]
+    n_dir = psi_ang.shape[-2]
     if directions.shape[0] != n_dir:
         raise ValueError(
             f"directions has {directions.shape[0]} rows but psi_ang has n_dir={n_dir}"
@@ -329,11 +337,11 @@ def integrate_J(
     directions: np.ndarray,
     weights: np.ndarray,
 ) -> np.ndarray:
-    """Integrate angular flux into current J with shape (nx, ny, nz, G, 3)."""
+    """Integrate angular flux into current J with shape (..., G, 3)."""
     psi_ang, directions, weights = _validate_moment_inputs(psi_ang, directions, weights)
     dtype = np.result_type(psi_ang.dtype, directions.dtype, weights.dtype)
     weighted_dirs = weights.astype(dtype, copy=False)[:, np.newaxis] * directions.astype(dtype, copy=False)
-    J = np.einsum("ijkmg,mc->ijkgc", psi_ang.astype(dtype, copy=False), weighted_dirs)
+    J = np.einsum("...mg,mc->...gc", psi_ang.astype(dtype, copy=False), weighted_dirs)
     if not np.all(np.isfinite(J)):
         raise FloatingPointError("integrate_J produced non-finite values")
     return J
@@ -349,7 +357,7 @@ def integrate_moments(
     dtype = np.result_type(psi_ang.dtype, directions.dtype, weights.dtype)
     psi = psi_ang.astype(dtype, copy=False)
     w = weights.astype(dtype, copy=False)
-    phi = np.tensordot(psi, w, axes=([3], [0]))
+    phi = np.tensordot(psi, w, axes=([-2], [0]))
     J = integrate_J(psi, directions.astype(dtype, copy=False), w)
     if not np.all(np.isfinite(phi)):
         raise FloatingPointError("integrate_moments produced non-finite scalar flux")
@@ -387,3 +395,7 @@ def build_reflection_map(directions: np.ndarray) -> dict[str, np.ndarray]:
         refl_map[face] = mapping
 
     return refl_map
+
+
+# Re-export unstructured mesh support for callers that import from sn_core.
+from mesh_builder import UnstructuredMesh, MeshBuilder

@@ -28,6 +28,7 @@ decay with distance (Test 3 in test_phase8.py).
 from __future__ import annotations
 import numpy as np
 from fusion.materials import FusionMaterial
+from fusion.mesh_utils import integrate_spatial
 
 # MeV -> Joule conversion  (exact, CODATA 2018)
 _MEV_TO_J: float = 1.602176634e-13   # J / MeV
@@ -62,7 +63,7 @@ def compute_heating(
     """
     _check_groups(phi, material)
     kerma_g = material.energy_deposition * material.sigma_a   # (G,) [MeV/cm]
-    return np.einsum('g,ijkg->ijk', kerma_g, phi)
+    return np.tensordot(phi, kerma_g, axes=([-1], [0]))
 
 
 def compute_heating_watts(
@@ -107,8 +108,7 @@ def integrate_power(
     """
     _check_groups(phi, material)
     Q           = compute_heating(phi, material)    # [MeV/cm^3/s]
-    vol_cell    = mesh.dx * mesh.dy * mesh.dz       # [cm^3]
-    P_MeV_per_s = float(Q.sum()) * vol_cell         # [MeV/s]
+    P_MeV_per_s = integrate_spatial(Q, mesh)         # [MeV/s]
 
     if unit == "MeV_s":
         return P_MeV_per_s
@@ -145,7 +145,9 @@ def peak_heat_flux(
     should exhibit the highest heat flux.
     """
     _check_groups(phi, material)
-    Q_w = compute_heating_watts(phi, material)    # (nx, ny, nz) [W/cm^3]
+    Q_w = compute_heating_watts(phi, material)    # (...,) [W/cm^3]
+    if hasattr(mesh, "N_cells"):
+        return float(Q_w.max())
     dx, dy, dz = mesh.dx, mesh.dy, mesh.dz
 
     face_slices = {
