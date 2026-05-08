@@ -98,8 +98,9 @@ def _assert_category_metrics(actual: dict[str, Any], golden: dict[str, Any]) -> 
     raise AssertionError(f"unhandled golden benchmark category {category!r}")
 
 
+@pytest.mark.ci_drift
 @pytest.mark.parametrize("case", FAST_CASES, ids=[case.name for case in FAST_CASES])
-def test_fast_golden_benchmark(case: GoldenCase) -> None:
+def test_fast_golden_ci_drift_benchmark(case: GoldenCase) -> None:
     golden = load_golden_case(case)
     actual = run_golden_case(case)
     _assert_common_metrics(actual, golden)
@@ -108,8 +109,16 @@ def test_fast_golden_benchmark(case: GoldenCase) -> None:
 
 @pytest.mark.heavy
 @pytest.mark.parametrize("case", HEAVY_CASES, ids=[case.name for case in HEAVY_CASES])
-def test_heavy_golden_benchmark(case: GoldenCase) -> None:
+def test_heavy_golden_opt_in_benchmark(case: GoldenCase) -> None:
     golden = load_golden_case(case)
     actual = run_golden_case(case)
     _assert_common_metrics(actual, golden)
     _assert_category_metrics(actual, golden)
+
+
+@pytest.mark.external_validation
+def test_external_physics_benchmarks_placeholder() -> None:
+    pytest.skip(
+        "External/experimental benchmark validation cases are not yet bundled. "
+        "When added, keep them separate from golden CI drift checks."
+    )

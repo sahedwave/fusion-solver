@@ -8,6 +8,18 @@ No solver change is valid without validation evidence.
 
 ## Required test categories
 
+### Validation tiers and scope
+
+- **Tier A — Synthetic software regression:** deterministic CI drift checks
+  against repository golden artifacts.
+- **Tier B — Manufactured/analytic checks:** compare to known analytic trends
+  or closed-form references where available.
+- **Tier C — External physics validation:** independent benchmark/experimental
+  comparisons (separate data ownership, review, and tolerances).
+
+Tier A/B are necessary for software quality but do **not** replace Tier C for
+claiming external physics validation.
+
 ### Conservation
 - Global particle balance
 - Cell-wise leakage consistency
@@ -23,6 +35,11 @@ No solver change is valid without validation evidence.
 - Thick diffusion limit
 - Ray effect sensitivity
 - Shielding benchmarks
+
+### External benchmark slots (placeholder, no fake data)
+- `external_validation/criticality/` (planned)
+- `external_validation/shielding/` (planned)
+- `external_validation/fusion_blanket/` (planned)
 
 ---
 
