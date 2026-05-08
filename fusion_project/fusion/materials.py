@@ -77,6 +77,7 @@ class FusionMaterial:
     energy_deposition: np.ndarray
     is_breeder:        bool  = False
     density:           float = 1.0
+    breeding_channels: dict[str, np.ndarray] | None = None
 
     def __post_init__(self):
         for attr in ("sigma_t", "sigma_a", "sigma_dpa", "energy_deposition"):
@@ -93,6 +94,16 @@ class FusionMaterial:
                     f"{self.name}.{attr}: contains negative values — "
                     "cross-sections must be non-negative."
                 )
+        if self.breeding_channels is not None:
+            channels = {}
+            for key, values in dict(self.breeding_channels).items():
+                arr = np.asarray(values, dtype=np.float64)
+                if arr.shape != (self.G,):
+                    raise ValueError(f"{self.name}.breeding_channels[{key!r}] expected shape {(self.G,)}, got {arr.shape}")
+                if np.any(arr < 0.0):
+                    raise ValueError(f"{self.name}.breeding_channels[{key!r}] contains negative values")
+                channels[str(key)] = arr
+            self.breeding_channels = channels
 
 
 # ================================================================
@@ -188,6 +199,10 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
             sigma_dpa         = np.array([0.002, 0.001, 0.0003]),
             # Li-6(n,alpha)T Q-value = 4.78 MeV; fast Q-value lower
             energy_deposition = np.array([4.80,  1.50,  4.78]),
+            breeding_channels = {
+                "li6_breeding": sigma_a_scaled * np.array([0.0, 1.0, 1.0]),
+                "li7_breeding": sigma_a_scaled * np.array([1.0, 0.0, 0.0]),
+            },
         )
     return _uniform_fill(f"Li4SiO4 ({li6_enrichment*100:.1f}%)", G, 2.39, True,
                          sigma_t0=0.148, sigma_a0=0.010,
