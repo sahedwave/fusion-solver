@@ -201,6 +201,9 @@ def _assert_material_equal(name: str, got: MaterialXS, expected: MaterialXS) -> 
 
 def _assert_library_equal(got: MultigroupLibrary, expected: MultigroupLibrary) -> None:
     _check("library energy_bounds", bool(np.allclose(got.energy_bounds, expected.energy_bounds)))
+    _check("library group_names", got.group_names == expected.group_names)
+    _check("library lethargy_widths", bool(np.allclose(got.lethargy_widths, expected.lethargy_widths)))
+    _check("library source_group_mapping", got.source_group_mapping == expected.source_group_mapping)
     _check("library metadata", got.metadata == expected.metadata)
     _check("library material keys", list(got.materials) == list(expected.materials))
     for key, expected_mat in expected.materials.items():
@@ -228,6 +231,43 @@ def test_hdf5_roundtrip_fission_fields_and_hdf5_suffix() -> None:
         path = Path(tmp) / "fission.hdf5"
         save_multigroup_library(lib, path)
         _assert_library_equal(load_multigroup_library(path), lib)
+
+
+def test_optional_group_metadata_validation_and_computed_lethargy() -> None:
+    lib = make_synthetic_library(4)
+    bounds = lib.energy_bounds
+    expected = np.abs(np.log(bounds[:-1] / bounds[1:]))
+    _check("computed lethargy from bounds", bool(np.allclose(lib.lethargy_widths, expected)))
+
+    with pytest.raises(ValueError, match="group_names must have length"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, group_names=("g0",))
+    with pytest.raises(ValueError, match="lethargy_widths must have shape"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, lethargy_widths=np.ones((3, 1)))
+    with pytest.raises(ValueError, match="out of range"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, source_group_mapping={"dt": 7})
+
+
+def test_group_metadata_roundtrip_json_npz_hdf5() -> None:
+    pytest.importorskip("h5py")
+    base = make_synthetic_library(5)
+    mat_name = next(iter(base.materials))
+    group_names = tuple(f"group_{g}" for g in range(base.G))
+    lethargy = np.linspace(0.1, 0.5, base.G)
+    source_map = {"dt": 0, "alpha_n": {"group": 3, "tag": "fusion"}}
+    lib = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials={mat_name: base.materials[mat_name]},
+        group_names=group_names,
+        lethargy_widths=lethargy,
+        source_group_mapping=source_map,
+        metadata={"schema": "with_group_metadata"},
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        for suffix in ("json", "npz", "h5"):
+            path = Path(tmp) / f"metadata_roundtrip.{suffix}"
+            save_multigroup_library(lib, path)
+            loaded = load_multigroup_library(path)
+            _assert_library_equal(loaded, lib)
 
 
 def test_hdf5_missing_dependency_error(monkeypatch: pytest.MonkeyPatch) -> None:
