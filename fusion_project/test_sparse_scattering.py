@@ -128,6 +128,34 @@ def test_sweep_path_does_not_allocate_full_dense_scattering_source(monkeypatch: 
     assert peak < 20 * dense_q_bytes
 
 
+def test_solver_path_avoids_legacy_dense_scattering_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guardrail: production solve path must not call legacy dense _scattering_source."""
+    G = 12
+    lib = make_sparse_synthetic_library(G)
+    mat = next(iter(lib.materials.values())).to_p1_material()
+    mesh = Mesh(2, 2, 2, 1.0, 1.0, 1.0)
+    directions, weights = build_quadrature(4)
+    spectrum = np.linspace(1.0, 2.0, G, dtype=np.float64)
+    Q = make_spectrum_source(mesh, spectrum, strength=1.0, geometry="point")
+    config = SolverConfig(tol=1.0e-6, max_outer=4, gmres_restart=8, inner_tol=1.0e-8)
+
+    def fail_full_scatter(*_args: object, **_kwargs: object) -> np.ndarray:
+        raise AssertionError("solver path used legacy dense _scattering_source")
+
+    monkeypatch.setattr(sn_operators, "_scattering_source", fail_full_scatter)
+    tracemalloc.start()
+    try:
+        result = solve_gmres_dsa(
+            mesh, mat, Q, directions, weights, BoundaryConditions(), build_reflection_map(directions), config
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    dense_q_bytes = mesh.nx * mesh.ny * mesh.nz * len(weights) * G * 8
+    assert np.all(np.isfinite(result.phi))
+    assert peak < 24 * dense_q_bytes
+
+
 @pytest.mark.benchmark
 @pytest.mark.parametrize("G", [70, 175])
 def test_sparse_memory_estimate_report_for_large_group_counts(G: int) -> None:

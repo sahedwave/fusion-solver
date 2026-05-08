@@ -6,6 +6,13 @@ shape, tritium breeding, and neutron heating post-processing.  The harness only
 constructs fixed-source problems and post-processes converged scalar fluxes; it
 does not modify transport numerics or regenerate reference data unless the CLI
 is invoked with ``--write-golden``.
+
+Validation scope:
+- This module provides *synthetic/manufactured software regression* cases for
+  deterministic drift detection.
+- It is not an external benchmark or experimental validation dataset.
+- External physics validation should be added as separate cases/data with
+  distinct markers and review gates.
 """
 
 from __future__ import annotations
@@ -111,6 +118,11 @@ HEAVY_CASES: tuple[GoldenCase, ...] = (
 )
 
 ALL_CASES: tuple[GoldenCase, ...] = FAST_CASES + HEAVY_CASES
+
+# Placeholder slots for future external validation suites.
+# Keep empty until reviewed benchmark definitions and licensed/reference data
+# are added under a dedicated external-validation data tree.
+EXTERNAL_VALIDATION_CASES: tuple[GoldenCase, ...] = ()
 
 
 def _mesh(case: GoldenCase) -> Mesh:

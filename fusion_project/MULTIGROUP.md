@@ -73,6 +73,24 @@ standard environments, install the project requirements:
 pip install -r requirements.txt
 ```
 
+### Constrained processed-XS importer (schema integration only)
+
+`sn_multigroup.import_processed_fusion_xs_json(path)` loads a narrow JSON
+schema intended for processed multigroup payload integration:
+
+- required: `energy_bounds`, `materials`
+- per material required: `name`, `sigma_t`, `sigma_s0`, `sigma_s1`
+- per material optional: `reactions`, `heating`, `chi`, `nu_sigma_f`, `metadata`
+
+Validation remains strict through `MaterialXS`/`MultigroupLibrary` checks
+(shape, monotonic bounds, finite/nonnegative XS, normalized `chi` when
+provided). If top-level `metadata.provenance` is present, library metadata is
+tagged `processed_external_format=true`; otherwise a warning is emitted and
+the tag is set false.
+
+This importer is **schema wiring only**. It does **not** imply FENDL/NJOY/OpenMC
+benchmark validation by itself.
+
 The HDF5 schema is:
 
 ```text
@@ -185,6 +203,25 @@ Current generated sizes:
 They are synthetic, downscatter-dominant, and meant for software validation,
 not nuclear design.
 
+## Multigroup roadmap status
+
+| Area | Status | Evidence | Remaining work |
+|---|---|---|---|
+| Dynamic G | **partial** | `sn_multigroup.py` data model + `make_synthetic_library`/`make_sparse_synthetic_library`; multigroup tests in `test_multigroup_library.py` and `test_multigroup_heavy.py`. | Keep parity for larger `G` across all physics/postprocessing paths; reduce Python sweep overhead for large `G` (ROADMAP Phase 3, PERFORMANCE bottlenecks). |
+| XS schema | **partial** | `MaterialXS` + `MultigroupLibrary` validation in `sn_multigroup.py`; schema tests in `test_multigroup_library.py`. | Add formally versioned schema docs and migration tooling for future fields; tighten external-import contract evolution. |
+| JSON/NPZ/HDF5 loaders | **partial** | `save_multigroup_library`/`load_multigroup_library` and HDF5 helpers in `sn_multigroup.py`; round-trip tests (`json/npz/h5`) in `test_multigroup_library.py`. | Add broader compatibility tests against archived historical files and stricter schema-version gating. |
+| Group metadata | **partial** | `group_names`, `lethargy_widths`, `source_group_mapping` in `MultigroupLibrary`; metadata tests in `test_multigroup_library.py`. | Expand metadata conventions and controlled vocab for downstream tooling; add compatibility policy docs. |
+| Sparse scattering | **partial** | Sparse CSC support in `MaterialXS`; sweep-time directional/group scattering in `sn_operators.py`; guardrail tests in `test_sparse_scattering.py`. | Backend kernel work remains future (ROADMAP Phase 4 note); optimize large-scale runtime beyond Python loops. |
+| Arbitrary source spectra | **partial** | `make_spectrum_source`, `dt_source_spectrum`, named-source helper in `sn_multigroup.py`; source tests in `test_multigroup_library.py`. | Add validated external source libraries/workflows; integrate richer source provenance and uncertainty metadata. |
+| 10/27/70/175 group tests | **partial** | `test_multigroup_heavy.py` fast/heavy tiers and `multigroup_benchmarks.py` report harness. | Keep heavy tier opt-in; extend coverage for larger meshes and stricter scalability gates after backend acceleration. |
+| Performance pass | **not started** (production-scale) | Current docs explicitly list Python sweep and memory bottlenecks in `PERFORMANCE.md`; benchmark artifacts are regression sentinels only. | Implement Phase 3+ roadmap items: group/angle blocking, compiled kernels, reduced storage, MPI/GPU pathways. |
+| Real physics-library integration | **partial** (schema only) | `import_processed_fusion_xs_json` importer in `sn_multigroup.py`; importer section above; mock `example_real_schema.json`. | Integrate real processed libraries with audited provenance and unit consistency checks; no placeholder physics accepted. |
+| Production validation | **not started** (external benchmark level) | `VALIDATION.md` Tier A/B vs Tier C distinction; current golden/multigroup suites are software regression + manufactured checks. | Add independent benchmark/experimental datasets, acceptance tolerances, and review workflow for Tier C external validation. |
+
+**Important:** current multigroup CI/golden suites are software-regression and
+manufactured-check infrastructure. They are not external benchmark validation
+or licensing-grade neutronics qualification.
+
 ## Memory Scaling Warning
 
 The legacy all-direction scattering API still returns a dense array with shape:
@@ -296,6 +333,19 @@ and are validated by `fusion_project/test_golden_benchmarks.py`.  These cases
 are deterministic fixed-source problems or analytic manufactured references for
 routine drift detection; they are not a substitute for licensed benchmark or
 experimental validation data.
+
+### Validation taxonomy (what these tests mean)
+
+1. **Synthetic software regression (golden CI drift checks)**  
+   Deterministic fixed-source snapshots used to detect numerical/software
+   drift in this repository.
+2. **Manufactured / analytic checks**  
+   Problems with known analytic behavior (for example slab attenuation trends)
+   used to verify discretization/implementation consistency.
+3. **External physics validation (future, separate suite)**  
+   Independent benchmark or experimental comparisons. Not included in the
+   current golden artifacts and must be tracked with separate datasets,
+   tolerances, and test markers.
 
 Covered fast CI categories:
 

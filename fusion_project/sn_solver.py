@@ -33,6 +33,7 @@ class SolverConfig:
     gmres_restart: int   = 30
     inner_tol:     float = 1e-10
     verbose:       bool  = False
+    compute_balance_diagnostics: bool = False
 
 
 @dataclass
@@ -45,6 +46,7 @@ class SolverResult:
     n_gmres_total:  int = 0
     residuals:      list = field(default_factory=list)
     positivity_diagnostics: dict = field(default_factory=dict)
+    balance_diagnostics: dict = field(default_factory=dict)
 
 
 def _mesh_flux_shape(mesh, G: int) -> tuple[int, ...]:
@@ -81,6 +83,40 @@ def _positivity_diagnostics(phi_raw: np.ndarray, mesh: Mesh) -> tuple[np.ndarray
         "rebalance_applied": False,
     }
     return np.maximum(phi_raw, 0.0), diagnostics
+
+
+def _balance_diagnostics(phi: np.ndarray, J: np.ndarray, Q_ext: np.ndarray, mesh, mat: P1Material) -> dict:
+    vols = _cell_volumes_for(phi, mesh)
+    source_by_group = np.sum(Q_ext * vols, axis=tuple(range(phi.ndim - 1)))
+    absorption_xs = mat.sigma_t - np.asarray(mat.sigma_s0_sparse.sum(axis=1)).ravel()
+    absorption_rate_by_group = np.sum((phi * absorption_xs) * vols, axis=tuple(range(phi.ndim - 1)))
+    scalar_flux_integral_by_group = np.sum(phi * vols, axis=tuple(range(phi.ndim - 1)))
+    leakage_proxy = None
+    if not isinstance(mesh, UnstructuredMesh):
+        vx = mesh.dy * mesh.dz
+        vy = mesh.dx * mesh.dz
+        vz = mesh.dx * mesh.dy
+        leakage_by_group = (
+            np.sum(J[-1, :, :, :, 0] - J[0, :, :, :, 0], axis=(0, 1)) * vx
+            + np.sum(J[:, -1, :, :, 1] - J[:, 0, :, :, 1], axis=(0, 1)) * vy
+            + np.sum(J[:, :, -1, :, 2] - J[:, :, 0, :, 2], axis=(0, 1)) * vz
+        )
+        leakage_proxy = leakage_by_group
+    source_total = float(np.sum(source_by_group))
+    absorption_total = float(np.sum(absorption_rate_by_group))
+    leakage_total = float(np.sum(leakage_proxy)) if leakage_proxy is not None else 0.0
+    balance_residual_total = source_total - absorption_total - leakage_total
+    return {
+        "source_integral_by_group": source_by_group.tolist(),
+        "absorption_integral_by_group": absorption_rate_by_group.tolist(),
+        "scalar_flux_integral_by_group": scalar_flux_integral_by_group.tolist(),
+        "leakage_proxy_integral_by_group": None if leakage_proxy is None else leakage_proxy.tolist(),
+        "balance_residual_total": balance_residual_total,
+        "leakage_proxy_note": (
+            "Structured-mesh boundary-current proxy using face-normal net current; "
+            "not an exact leakage for all discretizations/boundary treatments."
+        ),
+    }
 
 
 # ================================================================
@@ -138,6 +174,7 @@ def solve_source_iteration(
     tol:        float = 1e-8,
     max_iter:   int   = 2000,
     verbose:    bool  = False,
+    compute_balance_diagnostics: bool = False,
 ) -> SolverResult:
 
     T, S, A, _ = build_operators(mesh, mat, Q_ext, directions, weights, bc, refl_map)
@@ -168,6 +205,10 @@ def solve_source_iteration(
         n_outer=it + 1,
         residuals=residuals,
         positivity_diagnostics=positivity,
+        balance_diagnostics=(
+            _balance_diagnostics(phi_final, J_final, Q_ext, mesh, mat)
+            if compute_balance_diagnostics else {}
+        ),
     )
 
 
@@ -266,4 +307,8 @@ def solve_gmres_dsa(
         n_gmres_total=n_gmres_total,
         residuals=residuals,
         positivity_diagnostics=positivity,
+        balance_diagnostics=(
+            _balance_diagnostics(phi_final, J_final, Q_ext, mesh, mat)
+            if cfg.compute_balance_diagnostics else {}
+        ),
     )
