@@ -16,7 +16,21 @@ Optional data:
 
 - `reactions`: dictionary of reaction-name to `(G,)` array
 - `heating`: shape `(G,)`
+- `chi`: fission emission spectrum, shape `(G,)`
+- `nu_sigma_f`: neutron production cross section, shape `(G,)`
 - `metadata`: dictionary
+
+Fission data are first-class schema fields rather than entries hidden in
+`reactions` or `metadata`.  When present, `chi` and `nu_sigma_f` must be finite
+and nonnegative.  `chi` is required to be supplied already normalized, with
+`np.isclose(chi.sum(), 1.0)` true; the loader rejects unnormalized spectra
+rather than silently renormalizing them.  This preserves explicit source
+strength accounting for future fixed-source fission and eigenvalue workflows.
+
+Non-fission materials should omit `chi` and `nu_sigma_f` or set them to `null`
+in JSON.  A non-fission material may provide an all-zero `nu_sigma_f` when a
+code path expects the field to exist, but `chi` should remain omitted unless a
+valid normalized fission spectrum is physically meaningful for that material.
 
 `MultigroupLibrary` requires:
 
@@ -29,6 +43,10 @@ Use:
 
 - JSON for readable small libraries
 - NPZ for dense numerical arrays
+
+Both formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
+are present.  Older JSON and NPZ libraries that omit these fields remain valid
+and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
 
 ```python
 from sn_multigroup import load_multigroup_library

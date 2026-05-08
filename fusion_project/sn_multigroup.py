@@ -19,6 +19,8 @@ class MaterialXS:
     reactions: dict[str, np.ndarray] = field(default_factory=dict)
     heating: np.ndarray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    chi: np.ndarray | None = None
+    nu_sigma_f: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         sigma_t = np.asarray(self.sigma_t, dtype=np.float64)
@@ -59,11 +61,30 @@ class MaterialXS:
             if not np.all(np.isfinite(heating)) or np.any(heating < 0.0):
                 raise ValueError(f"{self.name}.heating must be finite and nonnegative")
 
+        chi = None if self.chi is None else np.asarray(self.chi, dtype=np.float64)
+        if chi is not None:
+            if chi.shape != (G,):
+                raise ValueError(f"{self.name}.chi must have shape {(G,)}, got {chi.shape}")
+            if not np.all(np.isfinite(chi)) or np.any(chi < 0.0):
+                raise ValueError(f"{self.name}.chi must be finite and nonnegative")
+            chi_sum = float(chi.sum())
+            if not np.isclose(chi_sum, 1.0):
+                raise ValueError(f"{self.name}.chi must be normalized with sum close to 1.0, got {chi_sum}")
+
+        nu_sigma_f = None if self.nu_sigma_f is None else np.asarray(self.nu_sigma_f, dtype=np.float64)
+        if nu_sigma_f is not None:
+            if nu_sigma_f.shape != (G,):
+                raise ValueError(f"{self.name}.nu_sigma_f must have shape {(G,)}, got {nu_sigma_f.shape}")
+            if not np.all(np.isfinite(nu_sigma_f)) or np.any(nu_sigma_f < 0.0):
+                raise ValueError(f"{self.name}.nu_sigma_f must be finite and nonnegative")
+
         object.__setattr__(self, "sigma_t", sigma_t)
         object.__setattr__(self, "sigma_s0", sigma_s0)
         object.__setattr__(self, "sigma_s1", sigma_s1)
         object.__setattr__(self, "reactions", reactions)
         object.__setattr__(self, "heating", heating)
+        object.__setattr__(self, "chi", chi)
+        object.__setattr__(self, "nu_sigma_f", nu_sigma_f)
 
     @property
     def G(self) -> int:
@@ -84,6 +105,8 @@ class MaterialXS:
             "sigma_s1": self.sigma_s1.tolist(),
             "reactions": {key: value.tolist() for key, value in self.reactions.items()},
             "heating": None if self.heating is None else self.heating.tolist(),
+            "chi": None if self.chi is None else self.chi.tolist(),
+            "nu_sigma_f": None if self.nu_sigma_f is None else self.nu_sigma_f.tolist(),
             "metadata": self.metadata,
         }
 
@@ -99,6 +122,8 @@ class MaterialXS:
                 for key, value in data.get("reactions", {}).items()
             },
             heating=None if data.get("heating") is None else np.asarray(data["heating"], dtype=np.float64),
+            chi=None if data.get("chi") is None else np.asarray(data["chi"], dtype=np.float64),
+            nu_sigma_f=None if data.get("nu_sigma_f") is None else np.asarray(data["nu_sigma_f"], dtype=np.float64),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -169,6 +194,8 @@ def save_multigroup_library(library: MultigroupLibrary, path: str | Path) -> Non
             arrays[prefix + "sigma_s0"] = mat.sigma_s0
             arrays[prefix + "sigma_s1"] = mat.sigma_s1
             arrays[prefix + "heating"] = np.asarray([] if mat.heating is None else mat.heating)
+            arrays[prefix + "chi"] = np.asarray([] if mat.chi is None else mat.chi)
+            arrays[prefix + "nu_sigma_f"] = np.asarray([] if mat.nu_sigma_f is None else mat.nu_sigma_f)
             arrays[prefix + "metadata_json"] = json.dumps(mat.metadata)
             arrays[prefix + "reaction_keys_json"] = json.dumps(list(mat.reactions))
             for reaction_key, values in mat.reactions.items():
@@ -194,6 +221,8 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                     for reaction_key in reaction_keys
                 }
                 heating_arr = data[prefix + "heating"]
+                chi_arr = data[prefix + "chi"] if prefix + "chi" in data else None
+                nu_sigma_f_arr = data[prefix + "nu_sigma_f"] if prefix + "nu_sigma_f" in data else None
                 materials[key] = MaterialXS(
                     name=str(data[prefix + "name"]),
                     sigma_t=data[prefix + "sigma_t"],
@@ -201,6 +230,8 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                     sigma_s1=data[prefix + "sigma_s1"],
                     reactions=reactions,
                     heating=None if heating_arr.size == 0 else heating_arr,
+                    chi=None if chi_arr is None or chi_arr.size == 0 else chi_arr,
+                    nu_sigma_f=None if nu_sigma_f_arr is None or nu_sigma_f_arr.size == 0 else nu_sigma_f_arr,
                     metadata=json.loads(str(data[prefix + "metadata_json"])),
                 )
             return MultigroupLibrary(

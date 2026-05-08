@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 
 import numpy as np
@@ -61,8 +62,112 @@ def test_json_npz_roundtrip() -> None:
             )
 
 
+def _make_fission_material() -> MaterialXS:
+    sigma_t = np.array([1.0, 1.1, 1.2], dtype=np.float64)
+    sigma_s0 = np.diag([0.2, 0.3, 0.4]).astype(np.float64)
+    sigma_s1 = np.zeros((3, 3), dtype=np.float64)
+    return MaterialXS(
+        name="fissionable",
+        sigma_t=sigma_t,
+        sigma_s0=sigma_s0,
+        sigma_s1=sigma_s1,
+        chi=np.array([0.6, 0.3, 0.1], dtype=np.float64),
+        nu_sigma_f=np.array([0.02, 0.05, 0.01], dtype=np.float64),
+    )
+
+
+def test_fission_schema_validation() -> None:
+    mat = _make_fission_material()
+    _check("fission chi accepted", bool(np.allclose(mat.chi, [0.6, 0.3, 0.1])))
+    _check("fission nu_sigma_f accepted", bool(np.allclose(mat.nu_sigma_f, [0.02, 0.05, 0.01])))
+
+    for label, kwargs in (
+        ("chi shape mismatch rejected", {"chi": np.array([1.0, 0.0])}),
+        ("nu_sigma_f shape mismatch rejected", {"nu_sigma_f": np.array([0.0, 0.0])}),
+        ("negative chi rejected", {"chi": np.array([0.6, -0.1, 0.5])}),
+        ("negative nu_sigma_f rejected", {"nu_sigma_f": np.array([0.0, -0.1, 0.2])}),
+        ("unnormalized chi rejected", {"chi": np.array([0.6, 0.3, 0.2])}),
+    ):
+        try:
+            base = _make_fission_material()
+            MaterialXS(
+                name="bad_fission",
+                sigma_t=base.sigma_t,
+                sigma_s0=base.sigma_s0,
+                sigma_s1=base.sigma_s1,
+                chi=kwargs.get("chi", base.chi),
+                nu_sigma_f=kwargs.get("nu_sigma_f", base.nu_sigma_f),
+            )
+        except ValueError:
+            _check(label, True)
+        else:
+            raise AssertionError(f"{label} was not rejected")
+
+
+def test_fission_json_npz_roundtrip() -> None:
+    mat = _make_fission_material()
+    lib = MultigroupLibrary(
+        energy_bounds=np.array([20.0e6, 1.0e6, 1.0e3, 1.0e-5], dtype=np.float64),
+        materials={mat.name: mat},
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for suffix in ("json", "npz"):
+            path = tmp_path / f"fission_library.{suffix}"
+            save_multigroup_library(lib, path)
+            loaded = load_multigroup_library(path)
+            loaded_mat = loaded.materials[mat.name]
+            _check(f"{suffix} fission chi roundtrip", bool(np.allclose(loaded_mat.chi, mat.chi)))
+            _check(f"{suffix} fission nu_sigma_f roundtrip", bool(np.allclose(loaded_mat.nu_sigma_f, mat.nu_sigma_f)))
+
+
+def test_old_schema_without_fission_fields_loads() -> None:
+    old_json = {
+        "energy_bounds": [3.0, 2.0, 1.0],
+        "materials": {
+            "legacy": {
+                "name": "legacy",
+                "sigma_t": [1.0, 1.1],
+                "sigma_s0": [[0.2, 0.0], [0.0, 0.3]],
+                "sigma_s1": [[0.0, 0.0], [0.0, 0.0]],
+                "reactions": {},
+                "heating": None,
+                "metadata": {"schema": "legacy"},
+            }
+        },
+        "metadata": {},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        json_path = tmp_path / "legacy.json"
+        json_path.write_text(json.dumps(old_json), encoding="utf-8")
+        loaded_json = load_multigroup_library(json_path)
+        _check("legacy json chi omitted", loaded_json.materials["legacy"].chi is None)
+        _check("legacy json nu_sigma_f omitted", loaded_json.materials["legacy"].nu_sigma_f is None)
+
+        npz_path = tmp_path / "legacy.npz"
+        np.savez(
+            npz_path,
+            energy_bounds=np.array([3.0, 2.0, 1.0], dtype=np.float64),
+            metadata_json="{}",
+            material_keys_json='["legacy"]',
+            **{
+                "material/legacy/name": np.asarray("legacy"),
+                "material/legacy/sigma_t": np.array([1.0, 1.1], dtype=np.float64),
+                "material/legacy/sigma_s0": np.array([[0.2, 0.0], [0.0, 0.3]], dtype=np.float64),
+                "material/legacy/sigma_s1": np.zeros((2, 2), dtype=np.float64),
+                "material/legacy/heating": np.asarray([]),
+                "material/legacy/metadata_json": '{"schema": "legacy"}',
+                "material/legacy/reaction_keys_json": "[]",
+            },
+        )
+        loaded_npz = load_multigroup_library(npz_path)
+        _check("legacy npz chi omitted", loaded_npz.materials["legacy"].chi is None)
+        _check("legacy npz nu_sigma_f omitted", loaded_npz.materials["legacy"].nu_sigma_f is None)
+
+
 def test_real_schema_example() -> None:
-    lib = load_multigroup_library("data/multigroup/example_real_schema.json")
+    lib = load_multigroup_library(Path(__file__).parent / "data/multigroup/example_real_schema.json")
     _check("real schema example G", lib.G == 2)
     _check("real schema material present", "mock_steel" in lib.materials)
     _check("real schema converts", lib.materials["mock_steel"].to_p1_material().G == 2)
@@ -190,6 +295,9 @@ def test_step_cell_acceleration_equivalence() -> None:
 def main() -> None:
     test_schema_validation()
     test_json_npz_roundtrip()
+    test_fission_schema_validation()
+    test_fission_json_npz_roundtrip()
+    test_old_schema_without_fission_fields_loads()
     test_real_schema_example()
     test_sources()
     test_solver_smoke()
