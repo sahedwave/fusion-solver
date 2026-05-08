@@ -1,0 +1,127 @@
+{
+  "case": {
+    "category": "slab_attenuation",
+    "description": "1-D-like pure-absorber slab with attenuation compared to exponential cell-center ratios.",
+    "gmres_restart": 24,
+    "inner_tol": 1e-10,
+    "max_outer": 24,
+    "mesh": [
+      6,
+      1,
+      1
+    ],
+    "name": "slab_attenuation_6x1x1",
+    "production_tier": "fast",
+    "quadrature_order": 4,
+    "solver_tol": 1e-08,
+    "source_strength": 1.0,
+    "spacing": [
+      0.75,
+      1.0,
+      1.0
+    ]
+  },
+  "library": {
+    "name": "golden_single_group_pure_absorber_v1",
+    "notes": "Deterministic production regression artifact; not an experimental benchmark replacement.",
+    "physics_validation": false,
+    "synthetic": true
+  },
+  "mesh": {
+    "cells": 6,
+    "dx": 0.75,
+    "dy": 1.0,
+    "dz": 1.0,
+    "nx": 6,
+    "ny": 1,
+    "nz": 1,
+    "type": "structured_cartesian"
+  },
+  "metrics": {
+    "attenuation": {
+      "adjacent_ratios": [
+        0.5915553643668151,
+        0.591555364366815,
+        0.5915553643668152,
+        0.5915553643668151,
+        0.5915553643668152
+      ],
+      "analytic_exponential_adjacent_ratio": 0.5915553643668151,
+      "cell_center_flux": [
+        0.7691263643685705,
+        0.4549808267181735,
+        0.26914634872918386,
+        0.15921496639049026,
+        0.09418446745577669,
+        0.055715326963496424
+      ],
+      "max_relative_error_to_exponential": 1.8767863356517936e-16,
+      "mean_adjacent_ratio": 0.5915553643668151
+    },
+    "convergence": {
+      "converged": true,
+      "gmres_iterations_total": 0,
+      "outer_iterations": 0,
+      "residual_final": 0.0,
+      "residual_history": [
+        0.0
+      ]
+    },
+    "material": {
+      "G": 1,
+      "sigma_a": [
+        0.7
+      ],
+      "sigma_s0_nnz": 0,
+      "sigma_s1_nnz": 0,
+      "sigma_t": [
+        0.7
+      ]
+    },
+    "positivity": {
+      "clipped_flux_integral": 0.0,
+      "negative_cell_count": 0,
+      "negative_flux_before_floor": 0.055715326963496424,
+      "rebalance_applied": false,
+      "relative_balance_change": 0.0
+    },
+    "scalar_flux": {
+      "integral": 1.3517762254692687,
+      "l1": 1.8023683006256914,
+      "l2": 0.9530619031172748,
+      "linf": 0.7691263643685705,
+      "max": 0.7691263643685705,
+      "mean": 0.3003947167709486,
+      "min": 0.055715326963496424,
+      "sum": 1.8023683006256914
+    },
+    "solution_type": "analytic_exponential_cell_center",
+    "source": {
+      "integral": 1.0,
+      "strength": 1.0
+    }
+  },
+  "reference_generator": "fusion_project.golden_benchmarks",
+  "schema_version": "fusion_golden_benchmark_v1",
+  "solver_config": {
+    "boundary_conditions": "vacuum_all_faces",
+    "gmres_restart": 24,
+    "inner_tol": 1e-10,
+    "max_outer": 24,
+    "method": "gmres_dsa",
+    "quadrature_order": 4,
+    "tol": 1e-08
+  },
+  "tolerances": {
+    "analytic_exponential_ratio_note": "Loose because the transport solve is 3-D S4 with isotropic volumetric source in the first slab cell, not a mono-directional uncollided beam solution.",
+    "analytic_exponential_ratio_rtol": 0.75,
+    "integral_atol": 5e-12,
+    "integral_rtol": 5e-10,
+    "max_relative_balance_change": 1e-10,
+    "residual_factor": 20.0,
+    "scalar_flux_atol": 5e-12,
+    "scalar_flux_rtol": 5e-10,
+    "selected_value_atol": 5e-12,
+    "selected_value_rtol": 5e-10
+  }
+}
