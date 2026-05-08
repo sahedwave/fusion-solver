@@ -43,18 +43,21 @@ Use:
 
 - JSON (`.json`) for readable small libraries
 - NPZ (`.npz`) for dense numerical arrays with only NumPy required
-- HDF5 (`.h5`, `.hdf5`) for portable hierarchical libraries when the optional
-  `h5py` dependency is installed
+- HDF5 (`.h5`, `.hdf5`) for portable hierarchical libraries when `h5py` is
+  installed; `h5py` is included in `requirements.txt` for standard project
+  environments
 
 All formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
 are present.  Older JSON and NPZ libraries that omit these fields remain valid
 and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
-HDF5 support is optional: `sn_multigroup.py` does not import `h5py` at module
-import time, and attempting to read or write `.h5`/`.hdf5` without `h5py` raises
-a clear installation error.  Install it with:
+`sn_multigroup.py` still does not import `h5py` at module import time, so
+source checkouts or constrained environments that have not installed the full
+requirements can continue to import the multigroup module.  Attempting to read
+or write `.h5`/`.hdf5` without `h5py` raises a clear installation error.  For
+standard environments, install the project requirements:
 
 ```bash
-pip install h5py
+pip install -r requirements.txt
 ```
 
 The HDF5 schema is:

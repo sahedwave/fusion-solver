@@ -2,3 +2,4 @@ numpy
 scipy
 meshio>=5.3
 pytest
+h5py>=3.11
