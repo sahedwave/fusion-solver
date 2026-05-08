@@ -42,9 +42,13 @@ def _smoke(G: int, nx: int) -> None:
     _check(f"{G}g iterations bounded", result.n_gmres_total > 0)
 
 
-def main() -> None:
+def test_heavy_multigroup_smoke() -> None:
     _smoke(70, 2)
     _smoke(175, 2)
+
+
+def main() -> None:
+    test_heavy_multigroup_smoke()
     print("Heavy multigroup smoke validation complete.")
 
 

@@ -16,7 +16,21 @@ Optional data:
 
 - `reactions`: dictionary of reaction-name to `(G,)` array
 - `heating`: shape `(G,)`
+- `chi`: fission emission spectrum, shape `(G,)`
+- `nu_sigma_f`: neutron production cross section, shape `(G,)`
 - `metadata`: dictionary
+
+Fission data are first-class schema fields rather than entries hidden in
+`reactions` or `metadata`.  When present, `chi` and `nu_sigma_f` must be finite
+and nonnegative.  `chi` is required to be supplied already normalized, with
+`np.isclose(chi.sum(), 1.0)` true; the loader rejects unnormalized spectra
+rather than silently renormalizing them.  This preserves explicit source
+strength accounting for future fixed-source fission and eigenvalue workflows.
+
+Non-fission materials should omit `chi` and `nu_sigma_f` or set them to `null`
+in JSON.  A non-fission material may provide an all-zero `nu_sigma_f` when a
+code path expects the field to exist, but `chi` should remain omitted unless a
+valid normalized fission spectrum is physically meaningful for that material.
 
 `MultigroupLibrary` requires:
 
@@ -27,8 +41,39 @@ Optional data:
 
 Use:
 
-- JSON for readable small libraries
-- NPZ for dense numerical arrays
+- JSON (`.json`) for readable small libraries
+- NPZ (`.npz`) for dense numerical arrays with only NumPy required
+- HDF5 (`.h5`, `.hdf5`) for portable hierarchical libraries when the optional
+  `h5py` dependency is installed
+
+All formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
+are present.  Older JSON and NPZ libraries that omit these fields remain valid
+and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
+HDF5 support is optional: `sn_multigroup.py` does not import `h5py` at module
+import time, and attempting to read or write `.h5`/`.hdf5` without `h5py` raises
+a clear installation error.  Install it with:
+
+```bash
+pip install h5py
+```
+
+The HDF5 schema is:
+
+```text
+/energy_bounds
+/metadata_json
+/material_keys_json
+/materials/<material-key>/name
+/materials/<material-key>/sigma_t
+/materials/<material-key>/sigma_s0
+/materials/<material-key>/sigma_s1
+/materials/<material-key>/chi                 # optional
+/materials/<material-key>/nu_sigma_f          # optional
+/materials/<material-key>/heating             # optional
+/materials/<material-key>/metadata_json
+/materials/<material-key>/reaction_keys_json
+/materials/<material-key>/reactions/<reaction-name>
+```
 
 ```python
 from sn_multigroup import load_multigroup_library

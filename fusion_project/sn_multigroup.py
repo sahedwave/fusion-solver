@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,8 @@ class MaterialXS:
     reactions: dict[str, np.ndarray] = field(default_factory=dict)
     heating: np.ndarray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    chi: np.ndarray | None = None
+    nu_sigma_f: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         sigma_t = np.asarray(self.sigma_t, dtype=np.float64)
@@ -59,11 +63,30 @@ class MaterialXS:
             if not np.all(np.isfinite(heating)) or np.any(heating < 0.0):
                 raise ValueError(f"{self.name}.heating must be finite and nonnegative")
 
+        chi = None if self.chi is None else np.asarray(self.chi, dtype=np.float64)
+        if chi is not None:
+            if chi.shape != (G,):
+                raise ValueError(f"{self.name}.chi must have shape {(G,)}, got {chi.shape}")
+            if not np.all(np.isfinite(chi)) or np.any(chi < 0.0):
+                raise ValueError(f"{self.name}.chi must be finite and nonnegative")
+            chi_sum = float(chi.sum())
+            if not np.isclose(chi_sum, 1.0):
+                raise ValueError(f"{self.name}.chi must be normalized with sum close to 1.0, got {chi_sum}")
+
+        nu_sigma_f = None if self.nu_sigma_f is None else np.asarray(self.nu_sigma_f, dtype=np.float64)
+        if nu_sigma_f is not None:
+            if nu_sigma_f.shape != (G,):
+                raise ValueError(f"{self.name}.nu_sigma_f must have shape {(G,)}, got {nu_sigma_f.shape}")
+            if not np.all(np.isfinite(nu_sigma_f)) or np.any(nu_sigma_f < 0.0):
+                raise ValueError(f"{self.name}.nu_sigma_f must be finite and nonnegative")
+
         object.__setattr__(self, "sigma_t", sigma_t)
         object.__setattr__(self, "sigma_s0", sigma_s0)
         object.__setattr__(self, "sigma_s1", sigma_s1)
         object.__setattr__(self, "reactions", reactions)
         object.__setattr__(self, "heating", heating)
+        object.__setattr__(self, "chi", chi)
+        object.__setattr__(self, "nu_sigma_f", nu_sigma_f)
 
     @property
     def G(self) -> int:
@@ -84,6 +107,8 @@ class MaterialXS:
             "sigma_s1": self.sigma_s1.tolist(),
             "reactions": {key: value.tolist() for key, value in self.reactions.items()},
             "heating": None if self.heating is None else self.heating.tolist(),
+            "chi": None if self.chi is None else self.chi.tolist(),
+            "nu_sigma_f": None if self.nu_sigma_f is None else self.nu_sigma_f.tolist(),
             "metadata": self.metadata,
         }
 
@@ -99,6 +124,8 @@ class MaterialXS:
                 for key, value in data.get("reactions", {}).items()
             },
             heating=None if data.get("heating") is None else np.asarray(data["heating"], dtype=np.float64),
+            chi=None if data.get("chi") is None else np.asarray(data["chi"], dtype=np.float64),
+            nu_sigma_f=None if data.get("nu_sigma_f") is None else np.asarray(data["nu_sigma_f"], dtype=np.float64),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -151,12 +178,102 @@ class MultigroupLibrary:
         )
 
 
+def _require_h5py() -> Any:
+    if importlib.util.find_spec("h5py") is None:
+        raise ImportError(
+            "HDF5 multigroup library support requires optional dependency h5py. "
+            "Install it with `pip install h5py` to read or write .h5/.hdf5 libraries."
+        )
+    return importlib.import_module("h5py")
+
+
+def _hdf5_string(value: str) -> str:
+    return value
+
+
+def _hdf5_scalar_string(dataset: Any) -> str:
+    value = dataset[()]
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def _hdf5_optional_array(group: Any, name: str) -> np.ndarray | None:
+    if name not in group:
+        return None
+    values = np.asarray(group[name])
+    return None if values.size == 0 else values
+
+
+def _save_hdf5_multigroup_library(library: MultigroupLibrary, path: Path) -> None:
+    h5py = _require_h5py()
+    string_dtype = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(path, "w") as h5:
+        h5.create_dataset("energy_bounds", data=library.energy_bounds)
+        h5.create_dataset("metadata_json", data=_hdf5_string(json.dumps(library.metadata)), dtype=string_dtype)
+        h5.create_dataset("material_keys_json", data=_hdf5_string(json.dumps(list(library.materials))), dtype=string_dtype)
+        materials_group = h5.create_group("materials")
+        for key, mat in library.materials.items():
+            mat_group = materials_group.create_group(key)
+            mat_group.create_dataset("name", data=_hdf5_string(mat.name), dtype=string_dtype)
+            mat_group.create_dataset("sigma_t", data=mat.sigma_t)
+            mat_group.create_dataset("sigma_s0", data=mat.sigma_s0)
+            mat_group.create_dataset("sigma_s1", data=mat.sigma_s1)
+            if mat.heating is not None:
+                mat_group.create_dataset("heating", data=mat.heating)
+            if mat.chi is not None:
+                mat_group.create_dataset("chi", data=mat.chi)
+            if mat.nu_sigma_f is not None:
+                mat_group.create_dataset("nu_sigma_f", data=mat.nu_sigma_f)
+            mat_group.create_dataset("metadata_json", data=_hdf5_string(json.dumps(mat.metadata)), dtype=string_dtype)
+            mat_group.create_dataset("reaction_keys_json", data=_hdf5_string(json.dumps(list(mat.reactions))), dtype=string_dtype)
+            reactions_group = mat_group.create_group("reactions")
+            for reaction_key, values in mat.reactions.items():
+                reactions_group.create_dataset(reaction_key, data=values)
+
+
+def _load_hdf5_multigroup_library(path: Path) -> MultigroupLibrary:
+    h5py = _require_h5py()
+    with h5py.File(path, "r") as h5:
+        material_keys = json.loads(_hdf5_scalar_string(h5["material_keys_json"]))
+        materials = {}
+        materials_group = h5["materials"]
+        for key in material_keys:
+            mat_group = materials_group[key]
+            if "reaction_keys_json" in mat_group:
+                reaction_keys = json.loads(_hdf5_scalar_string(mat_group["reaction_keys_json"]))
+            else:
+                reaction_keys = sorted(mat_group.get("reactions", {}).keys())
+            reactions_group = mat_group.get("reactions", {})
+            reactions = {
+                reaction_key: np.asarray(reactions_group[reaction_key])
+                for reaction_key in reaction_keys
+            }
+            materials[key] = MaterialXS(
+                name=_hdf5_scalar_string(mat_group["name"]),
+                sigma_t=np.asarray(mat_group["sigma_t"]),
+                sigma_s0=np.asarray(mat_group["sigma_s0"]),
+                sigma_s1=np.asarray(mat_group["sigma_s1"]),
+                reactions=reactions,
+                heating=_hdf5_optional_array(mat_group, "heating"),
+                chi=_hdf5_optional_array(mat_group, "chi"),
+                nu_sigma_f=_hdf5_optional_array(mat_group, "nu_sigma_f"),
+                metadata=json.loads(_hdf5_scalar_string(mat_group["metadata_json"])),
+            )
+        return MultigroupLibrary(
+            energy_bounds=np.asarray(h5["energy_bounds"]),
+            materials=materials,
+            metadata=json.loads(_hdf5_scalar_string(h5["metadata_json"])),
+        )
+
+
 def save_multigroup_library(library: MultigroupLibrary, path: str | Path) -> None:
     path = Path(path)
-    if path.suffix == ".json":
+    suffix = path.suffix.lower()
+    if suffix == ".json":
         path.write_text(json.dumps(library.to_json_dict(), indent=2), encoding="utf-8")
         return
-    if path.suffix == ".npz":
+    if suffix == ".npz":
         arrays: dict[str, Any] = {
             "energy_bounds": library.energy_bounds,
             "metadata_json": json.dumps(library.metadata),
@@ -169,20 +286,26 @@ def save_multigroup_library(library: MultigroupLibrary, path: str | Path) -> Non
             arrays[prefix + "sigma_s0"] = mat.sigma_s0
             arrays[prefix + "sigma_s1"] = mat.sigma_s1
             arrays[prefix + "heating"] = np.asarray([] if mat.heating is None else mat.heating)
+            arrays[prefix + "chi"] = np.asarray([] if mat.chi is None else mat.chi)
+            arrays[prefix + "nu_sigma_f"] = np.asarray([] if mat.nu_sigma_f is None else mat.nu_sigma_f)
             arrays[prefix + "metadata_json"] = json.dumps(mat.metadata)
             arrays[prefix + "reaction_keys_json"] = json.dumps(list(mat.reactions))
             for reaction_key, values in mat.reactions.items():
                 arrays[prefix + f"reaction/{reaction_key}"] = values
         np.savez(path, **arrays)
         return
-    raise ValueError(f"unsupported library format {path.suffix!r}; use .json or .npz")
+    if suffix in (".h5", ".hdf5"):
+        _save_hdf5_multigroup_library(library, path)
+        return
+    raise ValueError(f"unsupported library format {path.suffix!r}; use .json, .npz, .h5, or .hdf5")
 
 
 def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
     path = Path(path)
-    if path.suffix == ".json":
+    suffix = path.suffix.lower()
+    if suffix == ".json":
         return MultigroupLibrary.from_json_dict(json.loads(path.read_text(encoding="utf-8")))
-    if path.suffix == ".npz":
+    if suffix == ".npz":
         with np.load(path, allow_pickle=False) as data:
             material_keys = json.loads(str(data["material_keys_json"]))
             materials = {}
@@ -194,6 +317,8 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                     for reaction_key in reaction_keys
                 }
                 heating_arr = data[prefix + "heating"]
+                chi_arr = data[prefix + "chi"] if prefix + "chi" in data else None
+                nu_sigma_f_arr = data[prefix + "nu_sigma_f"] if prefix + "nu_sigma_f" in data else None
                 materials[key] = MaterialXS(
                     name=str(data[prefix + "name"]),
                     sigma_t=data[prefix + "sigma_t"],
@@ -201,6 +326,8 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                     sigma_s1=data[prefix + "sigma_s1"],
                     reactions=reactions,
                     heating=None if heating_arr.size == 0 else heating_arr,
+                    chi=None if chi_arr is None or chi_arr.size == 0 else chi_arr,
+                    nu_sigma_f=None if nu_sigma_f_arr is None or nu_sigma_f_arr.size == 0 else nu_sigma_f_arr,
                     metadata=json.loads(str(data[prefix + "metadata_json"])),
                 )
             return MultigroupLibrary(
@@ -208,7 +335,9 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                 materials=materials,
                 metadata=json.loads(str(data["metadata_json"])),
             )
-    raise ValueError(f"unsupported library format {path.suffix!r}; use .json or .npz")
+    if suffix in (".h5", ".hdf5"):
+        return _load_hdf5_multigroup_library(path)
+    raise ValueError(f"unsupported library format {path.suffix!r}; use .json, .npz, .h5, or .hdf5")
 
 
 def make_synthetic_library(G: int, name: str | None = None) -> MultigroupLibrary:
