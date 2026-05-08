@@ -1,0 +1,124 @@
+{
+  "case": {
+    "category": "shielding",
+    "description": "Fixed-source single-group shield with detector plane attenuation ratios.",
+    "gmres_restart": 24,
+    "inner_tol": 1e-10,
+    "max_outer": 24,
+    "mesh": [
+      4,
+      2,
+      2
+    ],
+    "name": "shielding_box_4x2x2",
+    "production_tier": "fast",
+    "quadrature_order": 4,
+    "solver_tol": 1e-08,
+    "source_strength": 1.0,
+    "spacing": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "library": {
+    "name": "golden_single_group_scattering_shield_v1",
+    "notes": "Deterministic production regression artifact; not an experimental benchmark replacement.",
+    "physics_validation": false,
+    "synthetic": true
+  },
+  "mesh": {
+    "cells": 16,
+    "dx": 1.0,
+    "dy": 1.0,
+    "dz": 1.0,
+    "nx": 4,
+    "ny": 2,
+    "nz": 2,
+    "type": "structured_cartesian"
+  },
+  "metrics": {
+    "convergence": {
+      "converged": true,
+      "gmres_iterations_total": 4,
+      "outer_iterations": 2,
+      "residual_final": 0.0,
+      "residual_history": [
+        1.0,
+        0.0
+      ]
+    },
+    "detectors": {
+      "back_to_front_ratio": 0.10248501479817193,
+      "selected_plane_averages": [
+        0.057169208648538396,
+        0.01583741767853547,
+        0.00833404207905837
+      ],
+      "selected_x_indices": [
+        1,
+        2,
+        3
+      ],
+      "x_plane_averages": [
+        0.08131961629191303,
+        0.057169208648538396,
+        0.01583741767853547,
+        0.00833404207905837
+      ]
+    },
+    "material": {
+      "G": 1,
+      "sigma_a": [
+        0.7
+      ],
+      "sigma_s0_nnz": 1,
+      "sigma_s1_nnz": 0,
+      "sigma_t": [
+        0.9
+      ]
+    },
+    "positivity": {
+      "clipped_flux_integral": 0.0,
+      "negative_cell_count": 0,
+      "negative_flux_before_floor": 0.00833404207905837,
+      "rebalance_applied": false,
+      "relative_balance_change": 0.0
+    },
+    "scalar_flux": {
+      "integral": 0.6506411387921811,
+      "l1": 0.6506411387921811,
+      "l2": 0.20200473724607537,
+      "linf": 0.08131961629191303,
+      "max": 0.08131961629191303,
+      "mean": 0.04066507117451132,
+      "min": 0.00833404207905837,
+      "sum": 0.6506411387921811
+    },
+    "source": {
+      "integral": 0.9999999999999999,
+      "strength": 1.0
+    }
+  },
+  "reference_generator": "fusion_project.golden_benchmarks",
+  "schema_version": "fusion_golden_benchmark_v1",
+  "solver_config": {
+    "boundary_conditions": "vacuum_all_faces",
+    "gmres_restart": 24,
+    "inner_tol": 1e-10,
+    "max_outer": 24,
+    "method": "gmres_dsa",
+    "quadrature_order": 4,
+    "tol": 1e-08
+  },
+  "tolerances": {
+    "integral_atol": 5e-12,
+    "integral_rtol": 5e-10,
+    "max_relative_balance_change": 1e-10,
+    "residual_factor": 20.0,
+    "scalar_flux_atol": 5e-12,
+    "scalar_flux_rtol": 5e-10,
+    "selected_value_atol": 5e-12,
+    "selected_value_rtol": 5e-10
+  }
+}

@@ -246,7 +246,9 @@ def test_hdf5_missing_dependency_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_real_schema_example() -> None:
-    lib = load_multigroup_library(Path(__file__).parent / "data/multigroup/example_real_schema.json")
+    lib = load_multigroup_library(
+        Path(__file__).resolve().parent / "data" / "multigroup" / "example_real_schema.json"
+    )
     _check("real schema example G", lib.G == 2)
     _check("real schema material present", "mock_steel" in lib.materials)
     _check("real schema converts", lib.materials["mock_steel"].to_p1_material().G == 2)
