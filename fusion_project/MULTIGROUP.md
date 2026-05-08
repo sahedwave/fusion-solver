@@ -78,6 +78,10 @@ The HDF5 schema is:
 /materials/<material-key>/reactions/<reaction-name>
 ```
 
+Both formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
+are present.  Older JSON and NPZ libraries that omit these fields remain valid
+and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
+
 ```python
 from sn_multigroup import load_multigroup_library
 
