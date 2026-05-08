@@ -449,6 +449,18 @@ def test_tbr_components_invalid_channel_shape_raises():
         )
 
 
+def test_non3group_material_fallback_metadata_and_shapes():
+    G = 5
+    mats = [SS316(G=G), Li4SiO4(G=G), Beryllium(G=G)]
+    for mat in mats:
+        assert mat.sigma_t.shape == (G,)
+        assert mat.sigma_a.shape == (G,)
+        assert mat.sigma_dpa.shape == (G,)
+        assert mat.energy_deposition.shape == (G,)
+        assert mat.metadata.get("synthetic_fallback") is True
+        assert mat.metadata.get("validation_status") == "not_fendl_njoy_openmc_validated"
+
+
 # ================================================================
 # TEST 9 — FUSIONRESULTS SAVE/LOAD ROUND-TRIP
 # ================================================================

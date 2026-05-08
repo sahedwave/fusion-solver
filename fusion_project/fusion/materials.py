@@ -33,7 +33,7 @@ this at construction time.
 
 from __future__ import annotations
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -78,6 +78,7 @@ class FusionMaterial:
     is_breeder:        bool  = False
     density:           float = 1.0
     breeding_channels: dict[str, np.ndarray] | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self):
         for attr in ("sigma_t", "sigma_a", "sigma_dpa", "energy_deposition"):
@@ -104,6 +105,7 @@ class FusionMaterial:
                     raise ValueError(f"{self.name}.breeding_channels[{key!r}] contains negative values")
                 channels[str(key)] = arr
             self.breeding_channels = channels
+        self.metadata = dict(self.metadata)
 
 
 # ================================================================
@@ -277,6 +279,11 @@ def Helium(G: int = 3) -> FusionMaterial:
         sigma_a           = np.zeros(G),
         sigma_dpa         = np.zeros(G),
         energy_deposition = np.zeros(G),
+        metadata          = {
+            "synthetic_fallback": True,
+            "validation_status": "not_fendl_njoy_openmc_validated",
+            "notes": "G!=3 compatibility fallback using 1/(1+g) decay surrogate",
+        },
     )
 
 
@@ -324,10 +331,12 @@ def _uniform_fill(
     sigma_t0: float, sigma_a0: float, sigma_dpa0: float, edep0: float,
 ) -> FusionMaterial:
     """
-    Fallback for G != 3: fill G groups using a 1/(1+g) spectral decay
-    from the fast-group (g=0) values.  This ensures the module is
-    compatible with any energy group structure used by the solver,
-    while preserving the correct ordering (fast > epi > thermal).
+    Synthetic compatibility fallback for G != 3.
+
+    IMPORTANT: this 1/(1+g) decay profile is not a processed multigroup
+    library and is not FENDL/NJOY/OpenMC validated. It is intended only
+    for software compatibility/testing when a true multigroup library is
+    unavailable.
     """
     decay = np.array([1.0 / (1.0 + g) for g in range(G)])
     return FusionMaterial(
@@ -339,4 +348,9 @@ def _uniform_fill(
         sigma_a           = sigma_a0   * decay,
         sigma_dpa         = sigma_dpa0 * decay,
         energy_deposition = edep0      * decay,
+        metadata          = {
+            "synthetic_fallback": True,
+            "validation_status": "not_fendl_njoy_openmc_validated",
+            "notes": "G!=3 compatibility fallback using 1/(1+g) decay",
+        },
     )
