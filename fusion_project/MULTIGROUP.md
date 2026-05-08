@@ -9,8 +9,15 @@ modules so existing transport APIs remain stable.
 `MaterialXS` requires:
 
 - `sigma_t`: shape `(G,)`
-- `sigma_s0`: shape `(G, G)`
-- `sigma_s1`: shape `(G, G)`
+- `sigma_s0`: shape `(G, G)` dense array or SciPy sparse matrix
+- `sigma_s1`: shape `(G, G)` dense array or SciPy sparse matrix
+
+The public `sigma_s0` and `sigma_s1` attributes remain dense NumPy arrays for
+legacy API compatibility.  Each material also exposes `sigma_s0_sparse` and
+`sigma_s1_sparse` as canonical CSC matrices.  Sweep-time scattering evaluates
+outgoing group columns from these sparse matrices, so sparse libraries touch
+only nonzero group-coupling entries and do not require constructing a full
+`(nx, ny, nz, n_dir, G)` scattering source.
 
 Optional data:
 
@@ -48,8 +55,14 @@ Use:
   environments
 
 All formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
-are present.  Older JSON and NPZ libraries that omit these fields remain valid
-and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
+are present.  Scattering is serialized in both dense form (`sigma_s0`,
+`sigma_s1`) and sparse COO triplet form (`sigma_s0_sparse`, `sigma_s1_sparse`)
+for JSON, NPZ, and HDF5.  The sparse schema is `format=coo_triplet_v1`,
+`shape=[G, G]`, and parallel `row`, `col`, `data` arrays using the convention
+`[source_group, outgoing_group]`.  Loaders prefer the sparse triplets when
+present and fall back to the dense arrays for older files.  Older JSON and NPZ
+libraries that omit these fields remain valid and load with
+`MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
 `sn_multigroup.py` still does not import `h5py` at module import time, so
 source checkouts or constrained environments that have not installed the full
 requirements can continue to import the multigroup module.  Attempting to read
@@ -70,6 +83,8 @@ The HDF5 schema is:
 /materials/<material-key>/sigma_t
 /materials/<material-key>/sigma_s0
 /materials/<material-key>/sigma_s1
+/materials/<material-key>/scattering_sparse/sigma_s0/{shape,row,col,data}
+/materials/<material-key>/scattering_sparse/sigma_s1/{shape,row,col,data}
 /materials/<material-key>/chi                 # optional
 /materials/<material-key>/nu_sigma_f          # optional
 /materials/<material-key>/heating             # optional
@@ -77,10 +92,6 @@ The HDF5 schema is:
 /materials/<material-key>/reaction_keys_json
 /materials/<material-key>/reactions/<reaction-name>
 ```
-
-Both formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
-are present.  Older JSON and NPZ libraries that omit these fields remain valid
-and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
 
 ```python
 from sn_multigroup import load_multigroup_library
@@ -125,15 +136,16 @@ not nuclear design.
 
 ## Memory Scaling Warning
 
-The current dense scattering source has shape:
+The legacy all-direction scattering API still returns a dense array with shape:
 
 ```text
 (nx, ny, nz, n_dir, G)
 ```
 
 For a `50x50x50`, S8, `G=175` problem, angular flux plus dense scattering
-source alone is roughly 26 GiB before solver overhead.  The next production
-step is group-blocked or angle-blocked scattering/sweep evaluation.
+source alone is roughly 26 GiB before solver overhead.  The sweep path now uses
+per-direction/per-group sparse scattering columns and a single cell-shaped
+source buffer, avoiding that full dense scattering-source allocation.
 
 ## Current Tested Scale
 

@@ -8,8 +8,48 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy import sparse
 
 from sn_core import P1Material
+
+
+def _as_scattering_csc(values: object, G: int, label: str) -> sparse.csc_matrix:
+    if sparse.issparse(values):
+        matrix = values.astype(np.float64).tocsc()
+    else:
+        matrix = sparse.csc_matrix(np.asarray(values, dtype=np.float64))
+    if matrix.shape != (G, G):
+        raise ValueError(f"{label} must have shape {(G, G)}, got {matrix.shape}")
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    if not np.all(np.isfinite(matrix.data)):
+        raise ValueError(f"{label} contains non-finite values")
+    return matrix
+
+
+def _sparse_triplet_dict(matrix: sparse.spmatrix) -> dict[str, Any]:
+    coo = matrix.tocoo()
+    return {
+        "format": "coo_triplet_v1",
+        "shape": list(coo.shape),
+        "row": coo.row.astype(np.int64).tolist(),
+        "col": coo.col.astype(np.int64).tolist(),
+        "data": coo.data.astype(np.float64).tolist(),
+    }
+
+
+def _sparse_from_triplet_dict(data: dict[str, Any], G: int, label: str) -> sparse.csc_matrix:
+    if data.get("format") != "coo_triplet_v1":
+        raise ValueError(f"{label} sparse format must be 'coo_triplet_v1'")
+    shape = tuple(int(v) for v in data["shape"])
+    if shape != (G, G):
+        raise ValueError(f"{label} sparse shape must be {(G, G)}, got {shape}")
+    row = np.asarray(data["row"], dtype=np.int64)
+    col = np.asarray(data["col"], dtype=np.int64)
+    values = np.asarray(data["data"], dtype=np.float64)
+    if row.shape != col.shape or row.shape != values.shape:
+        raise ValueError(f"{label} sparse row/col/data lengths differ")
+    return _as_scattering_csc(sparse.coo_matrix((values, (row, col)), shape=shape), G, label)
 
 
 @dataclass(frozen=True)
@@ -26,23 +66,22 @@ class MaterialXS:
 
     def __post_init__(self) -> None:
         sigma_t = np.asarray(self.sigma_t, dtype=np.float64)
-        sigma_s0 = np.asarray(self.sigma_s0, dtype=np.float64)
-        sigma_s1 = np.asarray(self.sigma_s1, dtype=np.float64)
         if sigma_t.ndim != 1:
             raise ValueError(f"{self.name}.sigma_t must have shape (G,), got {sigma_t.shape}")
         G = sigma_t.shape[0]
-        if sigma_s0.shape != (G, G):
-            raise ValueError(f"{self.name}.sigma_s0 must have shape {(G, G)}, got {sigma_s0.shape}")
-        if sigma_s1.shape != (G, G):
-            raise ValueError(f"{self.name}.sigma_s1 must have shape {(G, G)}, got {sigma_s1.shape}")
-        for label, arr in (("sigma_t", sigma_t), ("sigma_s0", sigma_s0), ("sigma_s1", sigma_s1)):
-            if not np.all(np.isfinite(arr)):
-                raise ValueError(f"{self.name}.{label} contains non-finite values")
-            if np.any(arr < 0.0):
-                raise ValueError(f"{self.name}.{label} contains negative values")
+        sigma_s0_csc = _as_scattering_csc(self.sigma_s0, G, f"{self.name}.sigma_s0")
+        sigma_s1_csc = _as_scattering_csc(self.sigma_s1, G, f"{self.name}.sigma_s1")
+        sigma_s0 = sigma_s0_csc.toarray()
+        sigma_s1 = sigma_s1_csc.toarray()
+        if np.any(sigma_s0_csc.data < 0.0):
+            raise ValueError(f"{self.name}.sigma_s0 contains negative values")
+        if np.any(sigma_s1_csc.data < 0.0):
+            raise ValueError(f"{self.name}.sigma_s1 contains negative values")
+        if not np.all(np.isfinite(sigma_t)):
+            raise ValueError(f"{self.name}.sigma_t contains non-finite values")
         if np.any(sigma_t <= 0.0):
             raise ValueError(f"{self.name}.sigma_t entries must be positive")
-        sigma_a = sigma_t - sigma_s0.sum(axis=1)
+        sigma_a = sigma_t - np.asarray(sigma_s0_csc.sum(axis=1)).ravel()
         if np.any(sigma_a < -1.0e-12):
             raise ValueError(f"{self.name} has negative absorption sigma_t - sum(sigma_s0)")
 
@@ -83,6 +122,8 @@ class MaterialXS:
         object.__setattr__(self, "sigma_t", sigma_t)
         object.__setattr__(self, "sigma_s0", sigma_s0)
         object.__setattr__(self, "sigma_s1", sigma_s1)
+        object.__setattr__(self, "sigma_s0_sparse", sigma_s0_csc)
+        object.__setattr__(self, "sigma_s1_sparse", sigma_s1_csc)
         object.__setattr__(self, "reactions", reactions)
         object.__setattr__(self, "heating", heating)
         object.__setattr__(self, "chi", chi)
@@ -94,10 +135,10 @@ class MaterialXS:
 
     @property
     def sigma_a(self) -> np.ndarray:
-        return self.sigma_t - self.sigma_s0.sum(axis=1)
+        return self.sigma_t - np.asarray(self.sigma_s0_sparse.sum(axis=1)).ravel()
 
     def to_p1_material(self) -> P1Material:
-        return P1Material(self.sigma_t, self.sigma_s0, self.sigma_s1)
+        return P1Material(self.sigma_t, self.sigma_s0_sparse, self.sigma_s1_sparse)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +146,8 @@ class MaterialXS:
             "sigma_t": self.sigma_t.tolist(),
             "sigma_s0": self.sigma_s0.tolist(),
             "sigma_s1": self.sigma_s1.tolist(),
+            "sigma_s0_sparse": _sparse_triplet_dict(self.sigma_s0_sparse),
+            "sigma_s1_sparse": _sparse_triplet_dict(self.sigma_s1_sparse),
             "reactions": {key: value.tolist() for key, value in self.reactions.items()},
             "heating": None if self.heating is None else self.heating.tolist(),
             "chi": None if self.chi is None else self.chi.tolist(),
@@ -117,8 +160,14 @@ class MaterialXS:
         return cls(
             name=data["name"],
             sigma_t=np.asarray(data["sigma_t"], dtype=np.float64),
-            sigma_s0=np.asarray(data["sigma_s0"], dtype=np.float64),
-            sigma_s1=np.asarray(data["sigma_s1"], dtype=np.float64),
+            sigma_s0=(
+                _sparse_from_triplet_dict(data["sigma_s0_sparse"], np.asarray(data["sigma_t"], dtype=np.float64).shape[0], "sigma_s0")
+                if "sigma_s0_sparse" in data else np.asarray(data["sigma_s0"], dtype=np.float64)
+            ),
+            sigma_s1=(
+                _sparse_from_triplet_dict(data["sigma_s1_sparse"], np.asarray(data["sigma_t"], dtype=np.float64).shape[0], "sigma_s1")
+                if "sigma_s1_sparse" in data else np.asarray(data["sigma_s1"], dtype=np.float64)
+            ),
             reactions={
                 key: np.asarray(value, dtype=np.float64)
                 for key, value in data.get("reactions", {}).items()
@@ -205,6 +254,28 @@ def _hdf5_optional_array(group: Any, name: str) -> np.ndarray | None:
     return None if values.size == 0 else values
 
 
+def _write_hdf5_sparse(group: Any, name: str, matrix: sparse.spmatrix) -> None:
+    triplet = _sparse_triplet_dict(matrix)
+    sparse_group = group.create_group(name)
+    sparse_group.attrs["format"] = triplet["format"]
+    sparse_group.create_dataset("shape", data=np.asarray(triplet["shape"], dtype=np.int64))
+    sparse_group.create_dataset("row", data=np.asarray(triplet["row"], dtype=np.int64))
+    sparse_group.create_dataset("col", data=np.asarray(triplet["col"], dtype=np.int64))
+    sparse_group.create_dataset("data", data=np.asarray(triplet["data"], dtype=np.float64))
+
+
+def _read_hdf5_sparse(group: Any, name: str, G: int) -> sparse.csc_matrix:
+    sparse_group = group[name]
+    triplet = {
+        "format": str(sparse_group.attrs["format"]),
+        "shape": np.asarray(sparse_group["shape"], dtype=np.int64).tolist(),
+        "row": np.asarray(sparse_group["row"], dtype=np.int64).tolist(),
+        "col": np.asarray(sparse_group["col"], dtype=np.int64).tolist(),
+        "data": np.asarray(sparse_group["data"], dtype=np.float64).tolist(),
+    }
+    return _sparse_from_triplet_dict(triplet, G, name)
+
+
 def _save_hdf5_multigroup_library(library: MultigroupLibrary, path: Path) -> None:
     h5py = _require_h5py()
     string_dtype = h5py.string_dtype(encoding="utf-8")
@@ -219,6 +290,9 @@ def _save_hdf5_multigroup_library(library: MultigroupLibrary, path: Path) -> Non
             mat_group.create_dataset("sigma_t", data=mat.sigma_t)
             mat_group.create_dataset("sigma_s0", data=mat.sigma_s0)
             mat_group.create_dataset("sigma_s1", data=mat.sigma_s1)
+            sparse_group = mat_group.create_group("scattering_sparse")
+            _write_hdf5_sparse(sparse_group, "sigma_s0", mat.sigma_s0_sparse)
+            _write_hdf5_sparse(sparse_group, "sigma_s1", mat.sigma_s1_sparse)
             if mat.heating is not None:
                 mat_group.create_dataset("heating", data=mat.heating)
             if mat.chi is not None:
@@ -252,8 +326,14 @@ def _load_hdf5_multigroup_library(path: Path) -> MultigroupLibrary:
             materials[key] = MaterialXS(
                 name=_hdf5_scalar_string(mat_group["name"]),
                 sigma_t=np.asarray(mat_group["sigma_t"]),
-                sigma_s0=np.asarray(mat_group["sigma_s0"]),
-                sigma_s1=np.asarray(mat_group["sigma_s1"]),
+                sigma_s0=(
+                    _read_hdf5_sparse(mat_group["scattering_sparse"], "sigma_s0", np.asarray(mat_group["sigma_t"]).shape[0])
+                    if "scattering_sparse" in mat_group else np.asarray(mat_group["sigma_s0"])
+                ),
+                sigma_s1=(
+                    _read_hdf5_sparse(mat_group["scattering_sparse"], "sigma_s1", np.asarray(mat_group["sigma_t"]).shape[0])
+                    if "scattering_sparse" in mat_group else np.asarray(mat_group["sigma_s1"])
+                ),
                 reactions=reactions,
                 heating=_hdf5_optional_array(mat_group, "heating"),
                 chi=_hdf5_optional_array(mat_group, "chi"),
@@ -285,6 +365,13 @@ def save_multigroup_library(library: MultigroupLibrary, path: str | Path) -> Non
             arrays[prefix + "sigma_t"] = mat.sigma_t
             arrays[prefix + "sigma_s0"] = mat.sigma_s0
             arrays[prefix + "sigma_s1"] = mat.sigma_s1
+            for scatter_name, scatter_matrix in (("sigma_s0", mat.sigma_s0_sparse), ("sigma_s1", mat.sigma_s1_sparse)):
+                triplet = _sparse_triplet_dict(scatter_matrix)
+                arrays[prefix + f"{scatter_name}_sparse/shape"] = np.asarray(triplet["shape"], dtype=np.int64)
+                arrays[prefix + f"{scatter_name}_sparse/row"] = np.asarray(triplet["row"], dtype=np.int64)
+                arrays[prefix + f"{scatter_name}_sparse/col"] = np.asarray(triplet["col"], dtype=np.int64)
+                arrays[prefix + f"{scatter_name}_sparse/data"] = np.asarray(triplet["data"], dtype=np.float64)
+                arrays[prefix + f"{scatter_name}_sparse/format"] = np.asarray(triplet["format"])
             arrays[prefix + "heating"] = np.asarray([] if mat.heating is None else mat.heating)
             arrays[prefix + "chi"] = np.asarray([] if mat.chi is None else mat.chi)
             arrays[prefix + "nu_sigma_f"] = np.asarray([] if mat.nu_sigma_f is None else mat.nu_sigma_f)
@@ -319,11 +406,25 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
                 heating_arr = data[prefix + "heating"]
                 chi_arr = data[prefix + "chi"] if prefix + "chi" in data else None
                 nu_sigma_f_arr = data[prefix + "nu_sigma_f"] if prefix + "nu_sigma_f" in data else None
+
+                def _npz_scatter(scatter_name: str) -> object:
+                    base = prefix + f"{scatter_name}_sparse/"
+                    if base + "data" not in data:
+                        return data[prefix + scatter_name]
+                    triplet = {
+                        "format": str(data[base + "format"]),
+                        "shape": data[base + "shape"].astype(np.int64).tolist(),
+                        "row": data[base + "row"].astype(np.int64).tolist(),
+                        "col": data[base + "col"].astype(np.int64).tolist(),
+                        "data": data[base + "data"].astype(np.float64).tolist(),
+                    }
+                    return _sparse_from_triplet_dict(triplet, data[prefix + "sigma_t"].shape[0], scatter_name)
+
                 materials[key] = MaterialXS(
                     name=str(data[prefix + "name"]),
                     sigma_t=data[prefix + "sigma_t"],
-                    sigma_s0=data[prefix + "sigma_s0"],
-                    sigma_s1=data[prefix + "sigma_s1"],
+                    sigma_s0=_npz_scatter("sigma_s0"),
+                    sigma_s1=_npz_scatter("sigma_s1"),
                     reactions=reactions,
                     heating=None if heating_arr.size == 0 else heating_arr,
                     chi=None if chi_arr is None or chi_arr.size == 0 else chi_arr,
@@ -381,6 +482,55 @@ def make_synthetic_library(G: int, name: str | None = None) -> MultigroupLibrary
     )
 
 
+def make_sparse_synthetic_library(G: int, name: str | None = None) -> MultigroupLibrary:
+    """Build a deliberately sparse upscatter/downscatter synthetic library.
+
+    Scattering entries are stored through the sparse MaterialXS path while
+    retaining dense array compatibility on the public attributes.  Each source
+    group scatters to itself, the two neighboring downscatter groups, and one
+    periodic upscatter group so tests exercise nontrivial column sparsity.
+    """
+    if G <= 0:
+        raise ValueError(f"G must be positive, got {G}")
+    energy_bounds = np.geomspace(2.0e7, 1.0e-5, G + 1)
+    idx = np.arange(G, dtype=np.float64)
+    sigma_t = 0.8 + 0.2 * idx / max(G - 1, 1)
+    rows: list[int] = []
+    cols: list[int] = []
+    data0: list[float] = []
+    data1: list[float] = []
+    for src in range(G):
+        entries = [(src, 0.28), ((src + 1) % G, 0.10), ((src + 2) % G, 0.045), ((src - 3) % G, 0.012)]
+        for out, frac in entries:
+            rows.append(src)
+            cols.append(out)
+            value = frac * sigma_t[src]
+            data0.append(value)
+            data1.append(0.08 * value if out == src else 0.015 * value)
+    sigma_s0 = sparse.coo_matrix((data0, (rows, cols)), shape=(G, G)).tocsc()
+    sigma_s1 = sparse.coo_matrix((data1, (rows, cols)), shape=(G, G)).tocsc()
+    reactions = {
+        "absorption": sigma_t - np.asarray(sigma_s0.sum(axis=1)).ravel(),
+        "damage": 0.01 + 0.005 * np.exp(-idx / max(G, 1)),
+    }
+    material_name = name or f"sparse_synthetic_{G}g"
+    return MultigroupLibrary(
+        energy_bounds=energy_bounds,
+        materials={
+            material_name: MaterialXS(
+                name=material_name,
+                sigma_t=sigma_t,
+                sigma_s0=sigma_s0,
+                sigma_s1=sigma_s1,
+                reactions=reactions,
+                heating=0.25 + np.exp(-idx / max(G / 2.0, 1.0)),
+                metadata={"synthetic": True, "sparse_scattering": True},
+            )
+        },
+        metadata={"description": f"Sparse synthetic {G}-group library with upscatter/downscatter"},
+    )
+
+
 def estimate_memory_bytes(
     nx: int,
     ny: int,
@@ -388,12 +538,18 @@ def estimate_memory_bytes(
     n_dir: int,
     G: int,
     dtype_bytes: int = 8,
+    scattering_nnz: int | None = None,
 ) -> dict[str, int]:
     cells = nx * ny * nz
+    nnz = G * G if scattering_nnz is None else int(scattering_nnz)
+    index_bytes = 4
+    sparse_matrix_bytes = nnz * (dtype_bytes + index_bytes) + (G + 1) * index_bytes
     return {
         "angular_flux": cells * n_dir * G * dtype_bytes,
         "scattering_source_dense": cells * n_dir * G * dtype_bytes,
         "scattering_source_blocked": cells * dtype_bytes,
+        "scattering_matrix_dense_pair": 2 * G * G * dtype_bytes,
+        "scattering_matrix_sparse_pair": 2 * sparse_matrix_bytes,
         "scalar_flux": cells * G * dtype_bytes,
         "current": cells * G * 3 * dtype_bytes,
     }
