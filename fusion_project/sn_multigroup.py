@@ -262,6 +262,31 @@ class MultigroupLibrary:
         )
 
 
+def source_spectrum_for_named_source(
+    library: MultigroupLibrary,
+    source_name: str,
+    default_energy_ev: float = 14.1e6,
+) -> np.ndarray:
+    """Return a normalized one-hot group spectrum for a named source.
+
+    Resolution order:
+    1. Use ``library.source_group_mapping`` entry when present.
+    2. For D-T aliases, fall back to ``sn_core.dt_source_spectrum`` energy scan.
+    """
+    source_key = str(source_name)
+    mapping = library.source_group_mapping.get(source_key)
+    if mapping is not None:
+        group_index = int(mapping["group"]) if isinstance(mapping, dict) else int(mapping)
+        spectrum = np.zeros(library.G, dtype=np.float64)
+        spectrum[group_index] = 1.0
+        return spectrum
+    if source_key.upper() in {"DT_14MEV", "DT", "D-T"}:
+        from sn_core import dt_source_spectrum
+
+        return dt_source_spectrum(library.energy_bounds, neutron_energy_ev=default_energy_ev)
+    raise ValueError(f"unknown source {source_name!r} and no source_group_mapping entry present")
+
+
 def _require_h5py() -> Any:
     if importlib.util.find_spec("h5py") is None:
         raise ImportError(

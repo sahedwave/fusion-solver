@@ -25,6 +25,7 @@ from sn_multigroup import (
     load_multigroup_library,
     make_synthetic_library,
     save_multigroup_library,
+    source_spectrum_for_named_source,
 )
 from sn_operators import _scattering_source, _scattering_source_direction_group, _step_cell, _step_cell_python
 from sn_solver import SolverConfig, solve_gmres_dsa
@@ -309,6 +310,48 @@ def test_sources() -> None:
     lo = min(bounds_desc[idx], bounds_desc[idx + 1])
     hi = max(bounds_desc[idx], bounds_desc[idx + 1])
     _check("D-T group contains 14.1 MeV", lo <= 14.1e6 <= hi)
+
+
+def test_dt_source_spectrum_descending_and_ascending_bounds() -> None:
+    bounds_desc = np.array([20.0e6, 14.05e6, 1.0e6], dtype=np.float64)
+    desc = dt_source_spectrum(bounds_desc)
+    _check("descending dt source picks first bin", bool(np.allclose(desc, [1.0, 0.0])))
+
+    bounds_asc = bounds_desc[::-1]
+    asc = dt_source_spectrum(bounds_asc)
+    _check("ascending dt source picks last bin", bool(np.allclose(asc, [0.0, 1.0])))
+
+
+def test_source_spectrum_for_named_source_mapping_and_fallback() -> None:
+    base = make_synthetic_library(4)
+    mapped = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials=base.materials,
+        source_group_mapping={"DT_14MeV": {"group": 2, "label": "user_override"}},
+    )
+    mapped_spec = source_spectrum_for_named_source(mapped, "DT_14MeV")
+    _check("explicit dt mapping honored", bool(np.allclose(mapped_spec, [0.0, 0.0, 1.0, 0.0])))
+
+    fallback_spec = source_spectrum_for_named_source(base, "DT_14MeV")
+    expected = dt_source_spectrum(base.energy_bounds)
+    _check("dt fallback matches energy scan", bool(np.allclose(fallback_spec, expected)))
+
+
+def test_dt_source_out_of_range_raises_cleanly() -> None:
+    bounds = np.array([1.0e6, 5.0e5, 1.0e5], dtype=np.float64)
+    with pytest.raises(ValueError, match="outside the energy group bounds"):
+        dt_source_spectrum(bounds, neutron_energy_ev=14.1e6)
+
+
+def test_named_source_spectrum_conserves_strength_through_make_spectrum_source() -> None:
+    lib = make_synthetic_library(6)
+    spectrum = source_spectrum_for_named_source(lib, "DT_14MeV")
+    mesh = Mesh(4, 3, 2, 0.5, 0.75, 1.25)
+    strength = 3.7
+    Q = make_spectrum_source(mesh, spectrum, strength=strength, geometry="gaussian")
+    vol = mesh.dx * mesh.dy * mesh.dz
+    _check("named source spectrum one-hot normalized", float(spectrum.sum()) == 1.0)
+    _check("named source strength conserved", abs(float(np.sum(Q) * vol) - strength) < 1.0e-12)
 
 
 def test_spectrum_source_conservation_structured_unstructured() -> None:
