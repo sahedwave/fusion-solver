@@ -176,6 +176,9 @@ Future unstructured evolution should move toward:
 - graph-aware sweep scheduling
 - curved/high-order geometry support
 
+# Required Validation
+
+
 # IMPORTANT
 
 This repository is now transitioning from:
@@ -184,3 +187,18 @@ to:
 - transport framework engineering.
 
 All future recommendations and implementations should align with that transition.
+
+
+
+After transport modifications run:
+
+```bash
+python -m pytest fusion_project/test_unstructured_mesh.py -q
+python -m pytest fusion_project/sn_validation.py -q
+```
+
+After multigroup modifications run:
+
+```bash
+python -m pytest fusion_project/test_multigroup_library.py -q
+```
