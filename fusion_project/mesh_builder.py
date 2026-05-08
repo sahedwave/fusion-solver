@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
+import importlib.util
 from pathlib import Path
 import numpy as np
 
@@ -9,6 +11,105 @@ from mesh_geometry import (
     compute_tet_volume, compute_hex_volume, compute_face_normal_and_area,
     build_face_connectivity,
 )
+
+
+@dataclass(frozen=True)
+class _GmshCellBlock:
+    type: str
+    data: np.ndarray
+
+
+@dataclass(frozen=True)
+class _GmshMesh:
+    points: np.ndarray
+    cells: list[_GmshCellBlock]
+    cell_data: dict[str, list[np.ndarray]]
+
+    @property
+    def cell_data_dict(self) -> dict[str, dict[str, np.ndarray]]:
+        by_name: dict[str, dict[str, np.ndarray]] = {}
+        for data_name, data_blocks in self.cell_data.items():
+            by_type: dict[str, list[np.ndarray]] = {}
+            for block, values in zip(self.cells, data_blocks):
+                by_type.setdefault(block.type, []).append(values)
+            by_name[data_name] = {
+                block_type: np.concatenate(values).astype(np.int64)
+                for block_type, values in by_type.items()
+            }
+        return by_name
+
+
+def _read_gmsh_ascii_v2(path: str | Path) -> _GmshMesh:
+    """Read the Gmsh ASCII 2.x subset needed by deterministic test meshes."""
+    lines = Path(path).read_text().splitlines()
+    node_id_to_index: dict[int, int] = {}
+    points: list[list[float]] = []
+    cell_blocks: list[_GmshCellBlock] = []
+    physical_blocks: list[np.ndarray] = []
+    gmsh_type_names = {2: "triangle", 3: "quad", 4: "tetra", 5: "hexahedron"}
+
+    i = 0
+    while i < len(lines):
+        marker = lines[i].strip()
+        if marker == "$Nodes":
+            count = int(lines[i + 1].strip())
+            start = i + 2
+            for local_index, line in enumerate(lines[start:start + count]):
+                fields = line.split()
+                node_id = int(fields[0])
+                node_id_to_index[node_id] = local_index
+                points.append([float(fields[1]), float(fields[2]), float(fields[3])])
+            i = start + count + 1
+            continue
+        if marker == "$Elements":
+            count = int(lines[i + 1].strip())
+            start = i + 2
+            current_type: str | None = None
+            current_cells: list[list[int]] = []
+            current_physical: list[int] = []
+
+            def flush_block() -> None:
+                if current_type is None or not current_cells:
+                    return
+                cell_blocks.append(_GmshCellBlock(current_type, np.asarray(current_cells, dtype=np.int64)))
+                physical_blocks.append(np.asarray(current_physical, dtype=np.int64))
+
+            for line in lines[start:start + count]:
+                fields = line.split()
+                gmsh_type = int(fields[1])
+                block_type = gmsh_type_names.get(gmsh_type)
+                if block_type is None:
+                    continue
+                n_tags = int(fields[2])
+                tags = [int(value) for value in fields[3:3 + n_tags]]
+                physical = tags[0] if tags else -1
+                node_ids = [node_id_to_index[int(value)] for value in fields[3 + n_tags:]]
+                if block_type != current_type:
+                    flush_block()
+                    current_type = block_type
+                    current_cells = []
+                    current_physical = []
+                current_cells.append(node_ids)
+                current_physical.append(physical)
+            flush_block()
+            i = start + count + 1
+            continue
+        i += 1
+
+    if not points or not cell_blocks:
+        raise ValueError(f"Gmsh file '{path}' does not contain readable nodes and elements")
+    return _GmshMesh(
+        points=np.asarray(points, dtype=np.float64),
+        cells=cell_blocks,
+        cell_data={"gmsh:physical": physical_blocks},
+    )
+
+
+def _read_gmsh(path: str | Path):
+    if importlib.util.find_spec("meshio") is not None:
+        meshio = importlib.import_module("meshio")
+        return meshio.read(path)
+    return _read_gmsh_ascii_v2(path)
 
 
 @dataclass(frozen=True)
@@ -189,8 +290,7 @@ class MeshBuilder:
 
     @staticmethod
     def from_gmsh(path: str | Path, boundary_tags: dict[str, int]) -> UnstructuredMesh:
-        import meshio
-        msh = meshio.read(path)
+        msh = _read_gmsh(path)
         nodes = np.asarray(msh.points[:, :3], dtype=np.float64)
         cells = []
         types = []

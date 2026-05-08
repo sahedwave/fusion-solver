@@ -234,6 +234,7 @@ def solve_gmres_dsa(
             rtol=cfg.inner_tol,
             maxiter=cfg.gmres_restart,
             callback=callback,
+            callback_type="legacy",
         )
         n_gmres_total += iters_this_call[0]
         iters_this_call[0] = 0

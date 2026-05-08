@@ -224,6 +224,39 @@ def _sweep_one_direction_group(
                 psi_z[i, j] = poz
 
 
+
+def _boundary_face_tags(mesh: UnstructuredMesh) -> dict[int, str]:
+    tags: dict[int, str] = {}
+    for tag, faces in mesh.boundary_faces.items():
+        for f in faces:
+            tags[int(f)] = str(tag)
+    return tags
+
+
+def _has_reflective_unstructured_boundary(mesh: UnstructuredMesh, bc: BoundaryConditions) -> bool:
+    return any(bc.boundary_type(tag) == "reflective" for tag in mesh.boundary_faces)
+
+
+def _reflected_direction_index(
+    direction_idx: int,
+    direction: np.ndarray,
+    normal: np.ndarray,
+    directions: np.ndarray,
+    refl_map: Dict[str, np.ndarray],
+    boundary_tag: str,
+) -> int:
+    if boundary_tag in refl_map:
+        return int(refl_map[boundary_tag][direction_idx])
+    target = direction - 2.0 * float(np.dot(direction, normal)) * normal
+    matches = np.nonzero(np.all(np.isclose(directions, target, rtol=0.0, atol=1.0e-12), axis=1))[0]
+    if len(matches) != 1:
+        raise ValueError(
+            f"could not find unique reflected direction for unstructured boundary "
+            f"{boundary_tag!r}, direction index {direction_idx}: {target}"
+        )
+    return int(matches[0])
+
+
 def _step_cell_unstructured(
     psi_inflow: np.ndarray,
     inflow_areas_cos: np.ndarray,
@@ -254,12 +287,14 @@ def _sweep_one_direction_group_unstructured(
     direction_idx: int,
     group:         int,
     direction:     np.ndarray,
+    directions:    np.ndarray,
     mesh:          UnstructuredMesh,
     sigma_t_g:     float,
     q_cell_g:      np.ndarray,
     bc:            BoundaryConditions,
     refl_map:      Dict[str, np.ndarray],
     sweep_order:   np.ndarray,
+    boundary_tags: dict[int, str],
 ) -> None:
     m, g = direction_idx, group
     face_flux: dict[int, float] = {}
@@ -280,7 +315,18 @@ def _sweep_one_direction_group_unstructured(
                 outflow_sum += area_cos
             elif dot < -1.0e-14:
                 other = cR if c == cL else cL
-                psi_in.append(float(face_flux.get(f, 0.0)) if other != -1 else 0.0)
+                if other != -1:
+                    psi_boundary = float(face_flux.get(f, 0.0))
+                else:
+                    boundary_tag = boundary_tags[f]
+                    if bc.boundary_type(boundary_tag) == "reflective":
+                        m_ref = _reflected_direction_index(
+                            direction_idx, direction, normal, directions, refl_map, boundary_tag
+                        )
+                        psi_boundary = float(psi_ang[c, m_ref, g])
+                    else:
+                        psi_boundary = 0.0
+                psi_in.append(psi_boundary)
                 inflow.append(area_cos)
         psi_c, psi_out = _step_cell_unstructured(
             np.asarray(psi_in, dtype=np.float64),
@@ -360,10 +406,27 @@ class TransportOperator:
         bc         = self.bc
         refl_map   = self.refl_map
 
-        has_reflective_bc = any(
-            bc.is_reflective(face)
-            for face in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
-        )
+        cartesian_proxy = None
+        cartesian_psi = None
+        if isinstance(mesh, UnstructuredMesh) and mesh.cartesian_shape is not None and mesh.cartesian_spacing is not None:
+            nx, ny, nz = mesh.cartesian_shape
+            dx, dy, dz = mesh.cartesian_spacing
+            cartesian_proxy = Mesh(int(nx), int(ny), int(nz), float(dx), float(dy), float(dz))
+            cartesian_psi = self.psi_ang.reshape(int(nx), int(ny), int(nz), len(weights), mat.G)
+            boundary_tags = None
+            has_reflective_bc = any(
+                bc.is_reflective(face)
+                for face in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+            )
+        elif isinstance(mesh, UnstructuredMesh):
+            boundary_tags = _boundary_face_tags(mesh)
+            has_reflective_bc = _has_reflective_unstructured_boundary(mesh, bc)
+        else:
+            boundary_tags = None
+            has_reflective_bc = any(
+                bc.is_reflective(face)
+                for face in ("xmin", "xmax", "ymin", "ymax", "zmin", "zmax")
+            )
 
         for g in range(mat.G):
             sigma_t_g = mat.sigma_t[g]
@@ -376,12 +439,23 @@ class TransportOperator:
                         phi_in, J_in, mat, directions[m], g
                     )
                     q_cell_g = Q_total[..., g] + q_scatter_g
-                    if isinstance(mesh, UnstructuredMesh):
+                    if cartesian_proxy is not None:
+                        _sweep_one_direction_group(
+                            psi_ang=cartesian_psi,
+                            direction_idx=m, group=g,
+                            amu=abs(mu), aeta=abs(eta), axi=abs(xi),
+                            mu=mu, eta=eta, xi=xi,
+                            mesh=cartesian_proxy, sigma_t_g=sigma_t_g,
+                            q_cell_g=q_cell_g.reshape(cartesian_proxy.nx, cartesian_proxy.ny, cartesian_proxy.nz),
+                            bc=bc, refl_map=refl_map,
+                        )
+                    elif isinstance(mesh, UnstructuredMesh):
                         _sweep_one_direction_group_unstructured(
                             psi_ang=self.psi_ang, direction_idx=m, group=g,
-                            direction=directions[m], mesh=mesh, sigma_t_g=sigma_t_g,
+                            direction=directions[m], directions=directions,
+                            mesh=mesh, sigma_t_g=sigma_t_g,
                             q_cell_g=q_cell_g, bc=bc, refl_map=refl_map,
-                            sweep_order=self._sweep_orders[m],
+                            sweep_order=self._sweep_orders[m], boundary_tags=boundary_tags,
                         )
                     else:
                         _sweep_one_direction_group(
@@ -587,6 +661,11 @@ class DSAPreconditioner:
         bc:   BoundaryConditions,
     ):
         if isinstance(mesh, UnstructuredMesh):
+            if mesh.cartesian_shape is not None and mesh.cartesian_spacing is not None:
+                nx, ny, nz = mesh.cartesian_shape
+                dx, dy, dz = mesh.cartesian_spacing
+                cart_mesh = Mesh(int(nx), int(ny), int(nz), float(dx), float(dy), float(dz))
+                return self._assemble_cartesian(cart_mesh, mat, bc)
             return self._assemble_unstructured(mesh, mat, bc, self.eta)
         return self._assemble_cartesian(mesh, mat, bc)
 

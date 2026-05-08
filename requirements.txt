@@ -1,0 +1,4 @@
+numpy
+scipy
+meshio>=5.3
+pytest

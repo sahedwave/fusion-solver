@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import itertools
 import math
 
@@ -35,11 +35,35 @@ class BoundaryConditions:
     ymax: bool = False
     zmin: bool = False
     zmax: bool = False
+    boundary_types: dict[str, str] = field(default_factory=dict)
 
     def is_reflective(self, face: str) -> bool:
         if face not in {"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"}:
             raise ValueError(f"unknown boundary face {face!r}")
         return bool(getattr(self, face))
+
+    def boundary_type(self, tag: str) -> str:
+        """Return the unstructured boundary condition for a named face tag.
+
+        Unstructured meshes use their ``boundary_faces`` keys as boundary tags.
+        Tags named ``"vacuum"`` or ``"reflective"`` are interpreted directly;
+        Cartesian face tags (``xmin``/``xmax``/...) keep using the six legacy
+        boolean flags; all other physical tags default to vacuum unless an
+        explicit ``boundary_types`` entry maps the tag to ``"vacuum"`` or
+        ``"reflective"``.
+        """
+        tag = str(tag)
+        if tag in self.boundary_types:
+            kind = str(self.boundary_types[tag]).lower()
+            if kind not in {"vacuum", "reflective"}:
+                raise ValueError(f"unknown boundary type {self.boundary_types[tag]!r} for tag {tag!r}")
+            return kind
+        kind = tag.lower()
+        if kind in {"vacuum", "reflective"}:
+            return kind
+        if tag in {"xmin", "xmax", "ymin", "ymax", "zmin", "zmax"}:
+            return "reflective" if self.is_reflective(tag) else "vacuum"
+        return "vacuum"
 
 
 @dataclass(frozen=True)
