@@ -178,7 +178,16 @@ def compute_tbr_components(
     G = phi.shape[-1]
     nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
 
-    if G == 3:
+    channels = nat_mat.breeding_channels or {}
+    if "li6_breeding" in channels or "li7_breeding" in channels:
+        if "li6_breeding" not in channels or "li7_breeding" not in channels:
+            raise ValueError("breeding_channels must provide both 'li6_breeding' and 'li7_breeding'")
+        sigma_a_li6 = np.asarray(channels["li6_breeding"], dtype=np.float64)
+        sigma_a_li7 = np.asarray(channels["li7_breeding"], dtype=np.float64)
+        if sigma_a_li6.shape != (G,) or sigma_a_li7.shape != (G,):
+            raise ValueError(f"breeding channel vectors must have shape {(G,)}")
+    elif G == 3:
+        # Legacy fallback path for historical 3-group behavior.
         # Li-6 component: keep epi (g=1) and thermal (g=2), zero fast (g=0)
         sigma_a_li6 = nat_mat.sigma_a.copy()
         sigma_a_li6[0] = 0.0
@@ -187,7 +196,7 @@ def compute_tbr_components(
         sigma_a_li7 = np.zeros(G)
         sigma_a_li7[0] = nat_mat.sigma_a[0]
     else:
-        # General G: Li-7 lives in group 0 (fast), Li-6 in all others
+        # Legacy fallback for non-3-group libraries lacking explicit channels.
         sigma_a_li6 = nat_mat.sigma_a.copy()
         sigma_a_li6[0] = 0.0
         sigma_a_li7 = np.zeros(G)

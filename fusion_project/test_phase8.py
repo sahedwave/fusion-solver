@@ -28,6 +28,7 @@ import sys
 import os
 import time
 import numpy as np
+import pytest
 
 # Ensure project root is on path when run from any directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,7 +43,7 @@ from sn_solver import SolverConfig, solve_gmres_dsa
 from fusion.source    import make_dt_source, source_strength
 from fusion.materials import FusionMaterial, SS316, Li4SiO4, Beryllium
 from fusion.reactions import compute_reaction_rate, integrate_reaction_rate
-from fusion.tbr       import compute_tbr, tbr_sensitivity_enrichment
+from fusion.tbr       import compute_tbr, compute_tbr_components, tbr_sensitivity_enrichment
 from fusion.heating   import (compute_heating, compute_heating_watts,
                                integrate_power, peak_heat_flux)
 from fusion.damage    import compute_dpa, integrate_dpa, peak_dpa
@@ -396,6 +397,68 @@ def test_group_mismatch():
             pass
 
     print(f"  [PASS] Group mismatch correctly detected in all fusion functions")
+
+
+def test_tbr_components_legacy_3group_fallback_consistency():
+    phi, _, mesh, Q_ext = _run_solver(nx=4)
+    S_DT = source_strength(Q_ext, mesh)
+    components = compute_tbr_components(phi, li6_enrichment=0.076, mesh=mesh, source_strength_val=S_DT)
+    assert np.isclose(
+        components["tbr_total"],
+        components["tbr_li6"] + components["tbr_li7"],
+        rtol=0.0,
+        atol=1.0e-13,
+    )
+
+
+def test_tbr_components_explicit_channels_g5_split_exact(monkeypatch):
+    G = 5
+    mesh = Mesh(nx=2, ny=2, nz=2, dx=1.0, dy=1.0, dz=1.0)
+    phi = np.ones((2, 2, 2, G), dtype=np.float64)
+    S_DT = 10.0
+    li6 = np.array([0.01, 0.02, 0.03, 0.04, 0.05], dtype=np.float64)
+    li7 = np.array([0.005, 0.0, 0.001, 0.0, 0.002], dtype=np.float64)
+    mat = FusionMaterial(
+        name="Li explicit channels",
+        G=G,
+        sigma_t=np.ones(G),
+        sigma_a=li6 + li7,
+        sigma_dpa=np.zeros(G),
+        energy_deposition=np.ones(G),
+        is_breeder=True,
+        breeding_channels={"li6_breeding": li6, "li7_breeding": li7},
+    )
+    total, _ = compute_tbr(phi, mat, mesh, S_DT)
+    monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: mat)
+    comps = compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
+    assert np.isclose(comps["tbr_total"], total, rtol=0.0, atol=1.0e-13)
+    assert np.isclose(comps["tbr_total"], comps["tbr_li6"] + comps["tbr_li7"], rtol=0.0, atol=1.0e-13)
+
+
+def test_tbr_components_invalid_channel_shape_raises():
+    with pytest.raises(ValueError, match="expected shape"):
+        FusionMaterial(
+            name="bad channels",
+            G=5,
+            sigma_t=np.ones(5),
+            sigma_a=np.ones(5),
+            sigma_dpa=np.zeros(5),
+            energy_deposition=np.ones(5),
+            is_breeder=True,
+            breeding_channels={"li6_breeding": np.ones(4), "li7_breeding": np.ones(5)},
+        )
+
+
+def test_non3group_material_fallback_metadata_and_shapes():
+    G = 5
+    mats = [SS316(G=G), Li4SiO4(G=G), Beryllium(G=G)]
+    for mat in mats:
+        assert mat.sigma_t.shape == (G,)
+        assert mat.sigma_a.shape == (G,)
+        assert mat.sigma_dpa.shape == (G,)
+        assert mat.energy_deposition.shape == (G,)
+        assert mat.metadata.get("synthetic_fallback") is True
+        assert mat.metadata.get("validation_status") == "not_fendl_njoy_openmc_validated"
 
 
 # ================================================================

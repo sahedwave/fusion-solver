@@ -71,10 +71,14 @@ def _scattering_source(
     directions: np.ndarray,    # (n_dir, 3)
 ) -> np.ndarray:               # (nx, ny, nz, n_dir, G)
     """
-    P0 + P1 scattering source for all directions and groups.
+    Legacy dense comparison API: P0 + P1 scattering source for all
+    directions and groups.
 
         Q_s[i,j,k,m,g] = Σ_{g'} { Σ_s0[g',g] · φ[i,j,k,g']
                                   + 3 Σ_s1[g',g] · (Ω_m · J[i,j,k,g']) }
+
+    Production sweeps must use `_scattering_source_direction_group` to
+    avoid constructing dense Q_scatter[nx,ny,nz,n_dir,G].
     """
     # P0 term: (...,G) × sparse(G,G) → (...,G), broadcast over directions.
     flat_phi = phi.reshape((-1, mat.G))

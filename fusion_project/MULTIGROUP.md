@@ -297,6 +297,19 @@ are deterministic fixed-source problems or analytic manufactured references for
 routine drift detection; they are not a substitute for licensed benchmark or
 experimental validation data.
 
+### Validation taxonomy (what these tests mean)
+
+1. **Synthetic software regression (golden CI drift checks)**  
+   Deterministic fixed-source snapshots used to detect numerical/software
+   drift in this repository.
+2. **Manufactured / analytic checks**  
+   Problems with known analytic behavior (for example slab attenuation trends)
+   used to verify discretization/implementation consistency.
+3. **External physics validation (future, separate suite)**  
+   Independent benchmark or experimental comparisons. Not included in the
+   current golden artifacts and must be tracked with separate datasets,
+   tolerances, and test markers.
+
 Covered fast CI categories:
 
 - **Shielding** — a single-group fixed-source Cartesian box with a smooth
