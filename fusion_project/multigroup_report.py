@@ -7,8 +7,12 @@ from sn_multigroup import format_memory_report, load_multigroup_library
 from sn_operators import _step_cell_numba
 
 
+PROJECT_DIR = Path(__file__).resolve().parent
+DEFAULT_MULTIGROUP_DIR = PROJECT_DIR / "data" / "multigroup"
+
+
 def main() -> None:
-    data_dir = Path("data/multigroup")
+    data_dir = DEFAULT_MULTIGROUP_DIR
     print("Multigroup Solver Capability Report")
     print("=" * 42)
     print("\nLibraries:")
@@ -17,7 +21,7 @@ def main() -> None:
             lib = load_multigroup_library(path)
             print(f"  {path}: G={lib.G}, materials={list(lib.materials)}")
     else:
-        print("  data/multigroup not found")
+        print(f"  {data_dir} not found")
 
     print("\nQuadrature:")
     for sn in (4, 8):
