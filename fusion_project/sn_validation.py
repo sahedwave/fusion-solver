@@ -354,6 +354,38 @@ def test_3group_physics():
         print(f"    φ_{nm} max={phi_g.max():.4e}  mean={phi_g.mean():.4e}")
 
 
+def test_balance_diagnostics_single_group_small_case():
+    mesh, mat, dirs, wts, bc, rmap = _default_setup(nx=4, G=1, c=0.7)
+    Q_ext = make_point_source(mesh, mat.G)
+    cfg = SolverConfig(tol=1e-7, max_outer=8, gmres_restart=12, inner_tol=1e-9, compute_balance_diagnostics=True)
+    result = solve_gmres_dsa(mesh, mat, Q_ext, dirs, wts, bc, rmap, cfg)
+    diag = result.balance_diagnostics
+    for key in (
+        "source_integral_by_group",
+        "absorption_integral_by_group",
+        "scalar_flux_integral_by_group",
+        "leakage_proxy_integral_by_group",
+        "balance_residual_total",
+    ):
+        assert key in diag, f"missing diagnostic key {key}"
+    assert len(diag["source_integral_by_group"]) == 1
+    assert np.isfinite(diag["balance_residual_total"])
+
+
+def test_balance_diagnostics_three_group_deterministic_small_case():
+    mesh, mat, dirs, wts, bc, rmap = _default_setup(nx=4, G=3)
+    Q_ext = make_point_source(mesh, mat.G, group=0)
+    cfg = SolverConfig(tol=1e-7, max_outer=8, gmres_restart=12, inner_tol=1e-9, compute_balance_diagnostics=True)
+    r1 = solve_gmres_dsa(mesh, mat, Q_ext, dirs, wts, bc, rmap, cfg)
+    r2 = solve_gmres_dsa(mesh, mat, Q_ext, dirs, wts, bc, rmap, cfg)
+    d1 = r1.balance_diagnostics
+    d2 = r2.balance_diagnostics
+    assert np.allclose(d1["source_integral_by_group"], d2["source_integral_by_group"], rtol=0.0, atol=0.0)
+    assert np.allclose(d1["absorption_integral_by_group"], d2["absorption_integral_by_group"], rtol=0.0, atol=0.0)
+    assert np.all(np.isfinite(d1["scalar_flux_integral_by_group"]))
+    assert np.isfinite(d1["balance_residual_total"])
+
+
 # ================================================================
 # TEST 11: OPERATOR DETERMINISM — NO-RESET CONSECUTIVE CALLS
 # ================================================================

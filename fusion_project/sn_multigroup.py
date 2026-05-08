@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 from typing import Any
+import warnings
 
 import numpy as np
 from scipy import sparse
@@ -183,6 +184,9 @@ class MaterialXS:
 class MultigroupLibrary:
     energy_bounds: np.ndarray
     materials: dict[str, MaterialXS]
+    group_names: tuple[str, ...] | None = None
+    lethargy_widths: np.ndarray | None = None
+    source_group_mapping: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -201,8 +205,31 @@ class MultigroupLibrary:
         for key, mat in materials.items():
             if mat.G != G:
                 raise ValueError(f"material {key!r} has G={mat.G}, expected {G}")
+        group_names = None if self.group_names is None else tuple(str(name) for name in self.group_names)
+        if group_names is not None and len(group_names) != G:
+            raise ValueError(f"group_names must have length {G}, got {len(group_names)}")
+        lethargy_widths = None if self.lethargy_widths is None else np.asarray(self.lethargy_widths, dtype=np.float64)
+        if lethargy_widths is None:
+            lethargy_widths = np.abs(np.log(energy_bounds[:-1] / energy_bounds[1:]))
+        if lethargy_widths.shape != (G,):
+            raise ValueError(f"lethargy_widths must have shape {(G,)}, got {lethargy_widths.shape}")
+        if not np.all(np.isfinite(lethargy_widths)):
+            raise ValueError("lethargy_widths contains non-finite values")
+        source_group_mapping = dict(self.source_group_mapping)
+        for source_name, value in source_group_mapping.items():
+            if isinstance(value, dict):
+                if "group" not in value:
+                    raise ValueError(f"source_group_mapping[{source_name!r}] dict entries must contain a 'group' key")
+                group_index = int(value["group"])
+            else:
+                group_index = int(value)
+            if not (0 <= group_index < G):
+                raise ValueError(f"source_group_mapping[{source_name!r}] group index {group_index} out of range for G={G}")
         object.__setattr__(self, "energy_bounds", energy_bounds)
         object.__setattr__(self, "materials", materials)
+        object.__setattr__(self, "group_names", group_names)
+        object.__setattr__(self, "lethargy_widths", lethargy_widths)
+        object.__setattr__(self, "source_group_mapping", source_group_mapping)
 
     @property
     def G(self) -> int:
@@ -212,6 +239,9 @@ class MultigroupLibrary:
         return {
             "energy_bounds": self.energy_bounds.tolist(),
             "materials": {key: mat.to_json_dict() for key, mat in self.materials.items()},
+            "group_names": None if self.group_names is None else list(self.group_names),
+            "lethargy_widths": self.lethargy_widths.tolist(),
+            "source_group_mapping": self.source_group_mapping,
             "metadata": self.metadata,
         }
 
@@ -223,8 +253,89 @@ class MultigroupLibrary:
                 key: MaterialXS.from_json_dict(value)
                 for key, value in data["materials"].items()
             },
+            group_names=None if data.get("group_names") is None else tuple(data["group_names"]),
+            lethargy_widths=(
+                None if data.get("lethargy_widths") is None
+                else np.asarray(data["lethargy_widths"], dtype=np.float64)
+            ),
+            source_group_mapping=dict(data.get("source_group_mapping", {})),
             metadata=dict(data.get("metadata", {})),
         )
+
+
+def source_spectrum_for_named_source(
+    library: MultigroupLibrary,
+    source_name: str,
+    default_energy_ev: float = 14.1e6,
+) -> np.ndarray:
+    """Return a normalized one-hot group spectrum for a named source.
+
+    Resolution order:
+    1. Use ``library.source_group_mapping`` entry when present.
+    2. For D-T aliases, fall back to ``sn_core.dt_source_spectrum`` energy scan.
+    """
+    source_key = str(source_name)
+    mapping = library.source_group_mapping.get(source_key)
+    if mapping is not None:
+        group_index = int(mapping["group"]) if isinstance(mapping, dict) else int(mapping)
+        spectrum = np.zeros(library.G, dtype=np.float64)
+        spectrum[group_index] = 1.0
+        return spectrum
+    if source_key.upper() in {"DT_14MEV", "DT", "D-T"}:
+        from sn_core import dt_source_spectrum
+
+        return dt_source_spectrum(library.energy_bounds, neutron_energy_ev=default_energy_ev)
+    raise ValueError(f"unknown source {source_name!r} and no source_group_mapping entry present")
+
+
+def import_processed_fusion_xs_json(path: str | Path) -> MultigroupLibrary:
+    """Load a constrained processed-fusion-XS JSON schema into MultigroupLibrary.
+
+    This is a schema-integration importer with strict validation. It does not
+    imply external benchmark or experimental validation of the source data.
+    """
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "energy_bounds" not in payload or "materials" not in payload:
+        raise ValueError("processed XS JSON requires 'energy_bounds' and 'materials'")
+    if not isinstance(payload["materials"], dict) or not payload["materials"]:
+        raise ValueError("processed XS JSON 'materials' must be a non-empty object")
+
+    metadata = dict(payload.get("metadata", {}))
+    provenance = metadata.get("provenance")
+    if provenance is None or str(provenance).strip() == "":
+        warnings.warn(
+            "processed XS JSON missing metadata.provenance; imported as unqualified schema payload",
+            UserWarning,
+            stacklevel=2,
+        )
+        metadata["processed_external_format"] = False
+    else:
+        metadata["processed_external_format"] = True
+
+    materials: dict[str, MaterialXS] = {}
+    for key, mat in payload["materials"].items():
+        if "name" not in mat:
+            raise ValueError(f"processed XS material {key!r} missing required field 'name'")
+        for required in ("sigma_t", "sigma_s0", "sigma_s1"):
+            if required not in mat:
+                raise ValueError(f"processed XS material {key!r} missing required field {required!r}")
+        materials[str(key)] = MaterialXS(
+            name=str(mat["name"]),
+            sigma_t=np.asarray(mat["sigma_t"], dtype=np.float64),
+            sigma_s0=np.asarray(mat["sigma_s0"], dtype=np.float64),
+            sigma_s1=np.asarray(mat["sigma_s1"], dtype=np.float64),
+            reactions={rk: np.asarray(rv, dtype=np.float64) for rk, rv in dict(mat.get("reactions", {})).items()},
+            heating=None if mat.get("heating") is None else np.asarray(mat["heating"], dtype=np.float64),
+            chi=None if mat.get("chi") is None else np.asarray(mat["chi"], dtype=np.float64),
+            nu_sigma_f=None if mat.get("nu_sigma_f") is None else np.asarray(mat["nu_sigma_f"], dtype=np.float64),
+            metadata=dict(mat.get("metadata", {})),
+        )
+
+    return MultigroupLibrary(
+        energy_bounds=np.asarray(payload["energy_bounds"], dtype=np.float64),
+        materials=materials,
+        metadata=metadata,
+    )
 
 
 def _require_h5py() -> Any:
@@ -281,6 +392,10 @@ def _save_hdf5_multigroup_library(library: MultigroupLibrary, path: Path) -> Non
     string_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(path, "w") as h5:
         h5.create_dataset("energy_bounds", data=library.energy_bounds)
+        if library.group_names is not None:
+            h5.create_dataset("group_names_json", data=_hdf5_string(json.dumps(list(library.group_names))), dtype=string_dtype)
+        h5.create_dataset("lethargy_widths", data=library.lethargy_widths)
+        h5.create_dataset("source_group_mapping_json", data=_hdf5_string(json.dumps(library.source_group_mapping)), dtype=string_dtype)
         h5.create_dataset("metadata_json", data=_hdf5_string(json.dumps(library.metadata)), dtype=string_dtype)
         h5.create_dataset("material_keys_json", data=_hdf5_string(json.dumps(list(library.materials))), dtype=string_dtype)
         materials_group = h5.create_group("materials")
@@ -343,6 +458,15 @@ def _load_hdf5_multigroup_library(path: Path) -> MultigroupLibrary:
         return MultigroupLibrary(
             energy_bounds=np.asarray(h5["energy_bounds"]),
             materials=materials,
+            group_names=(
+                None if "group_names_json" not in h5
+                else tuple(json.loads(_hdf5_scalar_string(h5["group_names_json"])))
+            ),
+            lethargy_widths=(np.asarray(h5["lethargy_widths"]) if "lethargy_widths" in h5 else None),
+            source_group_mapping=(
+                {} if "source_group_mapping_json" not in h5
+                else json.loads(_hdf5_scalar_string(h5["source_group_mapping_json"]))
+            ),
             metadata=json.loads(_hdf5_scalar_string(h5["metadata_json"])),
         )
 
@@ -356,6 +480,9 @@ def save_multigroup_library(library: MultigroupLibrary, path: str | Path) -> Non
     if suffix == ".npz":
         arrays: dict[str, Any] = {
             "energy_bounds": library.energy_bounds,
+            "group_names_json": json.dumps(None if library.group_names is None else list(library.group_names)),
+            "lethargy_widths": library.lethargy_widths,
+            "source_group_mapping_json": json.dumps(library.source_group_mapping),
             "metadata_json": json.dumps(library.metadata),
             "material_keys_json": json.dumps(list(library.materials)),
         }
@@ -434,6 +561,16 @@ def load_multigroup_library(path: str | Path) -> MultigroupLibrary:
             return MultigroupLibrary(
                 energy_bounds=data["energy_bounds"],
                 materials=materials,
+                group_names=(
+                    None
+                    if json.loads(str(data["group_names_json"])) is None
+                    else tuple(json.loads(str(data["group_names_json"])))
+                ) if "group_names_json" in data else None,
+                lethargy_widths=(data["lethargy_widths"] if "lethargy_widths" in data else None),
+                source_group_mapping=(
+                    json.loads(str(data["source_group_mapping_json"]))
+                    if "source_group_mapping_json" in data else {}
+                ),
                 metadata=json.loads(str(data["metadata_json"])),
             )
     if suffix in (".h5", ".hdf5"):
