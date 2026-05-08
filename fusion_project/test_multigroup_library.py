@@ -5,6 +5,9 @@ import json
 import tempfile
 
 import numpy as np
+import pytest
+
+import sn_multigroup
 
 from sn_core import (
     BoundaryConditions,
@@ -71,6 +74,11 @@ def _make_fission_material() -> MaterialXS:
         sigma_t=sigma_t,
         sigma_s0=sigma_s0,
         sigma_s1=sigma_s1,
+        # Keep these payloads in the fission fixture so JSON/NPZ/HDF5
+        # roundtrips cover all first-class and legacy material fields.
+        reactions={"fission": np.array([0.01, 0.02, 0.03], dtype=np.float64)},
+        heating=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        metadata={"kind": "test_fissionable"},
         chi=np.array([0.6, 0.3, 0.1], dtype=np.float64),
         nu_sigma_f=np.array([0.02, 0.05, 0.01], dtype=np.float64),
     )
@@ -164,6 +172,77 @@ def test_old_schema_without_fission_fields_loads() -> None:
         loaded_npz = load_multigroup_library(npz_path)
         _check("legacy npz chi omitted", loaded_npz.materials["legacy"].chi is None)
         _check("legacy npz nu_sigma_f omitted", loaded_npz.materials["legacy"].nu_sigma_f is None)
+
+
+def _assert_material_equal(name: str, got: MaterialXS, expected: MaterialXS) -> None:
+    _check(f"{name} name", got.name == expected.name)
+    _check(f"{name} sigma_t", bool(np.allclose(got.sigma_t, expected.sigma_t)))
+    _check(f"{name} sigma_s0", bool(np.allclose(got.sigma_s0, expected.sigma_s0)))
+    _check(f"{name} sigma_s1", bool(np.allclose(got.sigma_s1, expected.sigma_s1)))
+    _check(f"{name} metadata", got.metadata == expected.metadata)
+    _check(f"{name} reaction keys", set(got.reactions) == set(expected.reactions))
+    for reaction_key, expected_values in expected.reactions.items():
+        _check(f"{name} reaction {reaction_key}", bool(np.allclose(got.reactions[reaction_key], expected_values)))
+    _check(
+        f"{name} heating",
+        got.heating is expected.heating if expected.heating is None else bool(np.allclose(got.heating, expected.heating)),
+    )
+    _check(
+        f"{name} chi",
+        got.chi is expected.chi if expected.chi is None else bool(np.allclose(got.chi, expected.chi)),
+    )
+    _check(
+        f"{name} nu_sigma_f",
+        got.nu_sigma_f is expected.nu_sigma_f
+        if expected.nu_sigma_f is None
+        else bool(np.allclose(got.nu_sigma_f, expected.nu_sigma_f)),
+    )
+
+
+def _assert_library_equal(got: MultigroupLibrary, expected: MultigroupLibrary) -> None:
+    _check("library energy_bounds", bool(np.allclose(got.energy_bounds, expected.energy_bounds)))
+    _check("library metadata", got.metadata == expected.metadata)
+    _check("library material keys", list(got.materials) == list(expected.materials))
+    for key, expected_mat in expected.materials.items():
+        _assert_material_equal(f"material {key}", got.materials[key], expected_mat)
+
+
+def test_hdf5_roundtrip_synthetic_library() -> None:
+    pytest.importorskip("h5py")
+    lib = make_synthetic_library(10)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "synthetic.h5"
+        save_multigroup_library(lib, path)
+        _assert_library_equal(load_multigroup_library(path), lib)
+
+
+def test_hdf5_roundtrip_fission_fields_and_hdf5_suffix() -> None:
+    pytest.importorskip("h5py")
+    mat = _make_fission_material()
+    lib = MultigroupLibrary(
+        energy_bounds=np.array([20.0e6, 1.0e6, 1.0e3, 1.0e-5], dtype=np.float64),
+        materials={mat.name: mat},
+        metadata={"format": "hdf5_test"},
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "fission.hdf5"
+        save_multigroup_library(lib, path)
+        _assert_library_equal(load_multigroup_library(path), lib)
+
+
+def test_hdf5_missing_dependency_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    find_spec = sn_multigroup.importlib.util.find_spec
+
+    def missing_h5py(name: str) -> object:
+        return None if name == "h5py" else find_spec(name)
+
+    monkeypatch.setattr(sn_multigroup.importlib.util, "find_spec", missing_h5py)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "library.h5"
+        with pytest.raises(ImportError, match="pip install h5py"):
+            save_multigroup_library(make_synthetic_library(2), path)
+        with pytest.raises(ImportError, match="pip install h5py"):
+            load_multigroup_library(path)
 
 
 def test_real_schema_example() -> None:

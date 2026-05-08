@@ -41,8 +41,42 @@ valid normalized fission spectrum is physically meaningful for that material.
 
 Use:
 
-- JSON for readable small libraries
-- NPZ for dense numerical arrays
+- JSON (`.json`) for readable small libraries
+- NPZ (`.npz`) for dense numerical arrays with only NumPy required
+- HDF5 (`.h5`, `.hdf5`) for portable hierarchical libraries when `h5py` is
+  installed; `h5py` is included in `requirements.txt` for standard project
+  environments
+
+All formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
+are present.  Older JSON and NPZ libraries that omit these fields remain valid
+and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
+`sn_multigroup.py` still does not import `h5py` at module import time, so
+source checkouts or constrained environments that have not installed the full
+requirements can continue to import the multigroup module.  Attempting to read
+or write `.h5`/`.hdf5` without `h5py` raises a clear installation error.  For
+standard environments, install the project requirements:
+
+```bash
+pip install -r requirements.txt
+```
+
+The HDF5 schema is:
+
+```text
+/energy_bounds
+/metadata_json
+/material_keys_json
+/materials/<material-key>/name
+/materials/<material-key>/sigma_t
+/materials/<material-key>/sigma_s0
+/materials/<material-key>/sigma_s1
+/materials/<material-key>/chi                 # optional
+/materials/<material-key>/nu_sigma_f          # optional
+/materials/<material-key>/heating             # optional
+/materials/<material-key>/metadata_json
+/materials/<material-key>/reaction_keys_json
+/materials/<material-key>/reactions/<reaction-name>
+```
 
 Both formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
 are present.  Older JSON and NPZ libraries that omit these fields remain valid
