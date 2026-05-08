@@ -76,13 +76,18 @@ def _scattering_source(
         Q_s[i,j,k,m,g] = Σ_{g'} { Σ_s0[g',g] · φ[i,j,k,g']
                                   + 3 Σ_s1[g',g] · (Ω_m · J[i,j,k,g']) }
     """
-    # P0 term: (...,G) × (G,G) → (...,G), broadcast over directions.
-    q_p0 = np.tensordot(phi, mat.sigma_s0, axes=([-1], [0]))
+    # P0 term: (...,G) × sparse(G,G) → (...,G), broadcast over directions.
+    flat_phi = phi.reshape((-1, mat.G))
+    q_p0 = (flat_phi @ mat.sigma_s0_sparse).reshape(phi.shape)
     Q_s = np.expand_dims(q_p0, axis=-2)
 
-    # P1 term
+    # P1 term.  The public all-direction API necessarily returns a dense
+    # directional source, but the group coupling itself is evaluated through
+    # sparse matrices; the sweep path below uses the per-direction/group helper
+    # and does not construct this full Q_s array.
     omega_dot_J = np.einsum('mc,...gc->...mg', directions, J)
-    q_p1 = 3.0 * np.tensordot(omega_dot_J, mat.sigma_s1, axes=([-1], [0]))
+    flat_omega_dot_J = omega_dot_J.reshape((-1, mat.G))
+    q_p1 = 3.0 * (flat_omega_dot_J @ mat.sigma_s1_sparse).reshape(omega_dot_J.shape)
 
     return Q_s + q_p1
 
@@ -95,10 +100,20 @@ def _scattering_source_direction_group(
     group:     int,
 ) -> np.ndarray:              # (nx, ny, nz)
     """P0+P1 scattering source for one outgoing direction and group."""
-    q_p0 = np.tensordot(phi, mat.sigma_s0[:, group], axes=([-1], [0]))
-    omega_dot_J = np.einsum("c,...gc->...g", direction, J)
-    q_p1 = 3.0 * np.tensordot(omega_dot_J, mat.sigma_s1[:, group], axes=([-1], [0]))
-    return q_p0 + q_p1
+    start0, stop0 = mat.sigma_s0_sparse.indptr[group], mat.sigma_s0_sparse.indptr[group + 1]
+    rows0 = mat.sigma_s0_sparse.indices[start0:stop0]
+    vals0 = mat.sigma_s0_sparse.data[start0:stop0]
+    q = np.zeros(phi.shape[:-1], dtype=np.float64)
+    if vals0.size:
+        q += np.tensordot(phi[..., rows0], vals0, axes=([-1], [0]))
+
+    start1, stop1 = mat.sigma_s1_sparse.indptr[group], mat.sigma_s1_sparse.indptr[group + 1]
+    rows1 = mat.sigma_s1_sparse.indices[start1:stop1]
+    vals1 = mat.sigma_s1_sparse.data[start1:stop1]
+    if vals1.size:
+        omega_dot_J = np.einsum("c,...gc->...g", direction, J[..., rows1, :])
+        q += 3.0 * np.tensordot(omega_dot_J, vals1, axes=([-1], [0]))
+    return q
 
 
 def _step_cell_python(

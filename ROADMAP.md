@@ -32,7 +32,7 @@
 
 - High-order quadrature support
 - Eigenvalue (k-effective) solver
-- Sparse scattering matrices
+- Sparse scattering matrices (implemented for material schema and sweep-source evaluation; backend kernels remain future work)
 - Advanced acceleration (CMFD / NDA)
 
 ---

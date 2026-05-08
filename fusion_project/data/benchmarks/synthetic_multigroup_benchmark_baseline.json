@@ -1,0 +1,278 @@
+{
+  "generated_at_utc": "2026-05-08T09:45:29Z",
+  "results": [
+    {
+      "case": {
+        "gmres_restart": 12,
+        "groups": 10,
+        "inner_tol": 1e-07,
+        "max_outer": 8,
+        "mesh_n": 2,
+        "name": "fast_10g_n2_s4",
+        "quadrature_order": 4,
+        "solver_tol": 1e-06,
+        "source_strength": 1.0,
+        "tier": "fast"
+      },
+      "converged": true,
+      "gmres_iterations_total": 10,
+      "group_count": 10,
+      "library": {
+        "description": "Synthetic software benchmark; not an experimental or benchmark-physics validation case.",
+        "physics_validation": false,
+        "sigma_s0_nnz": 40,
+        "sigma_s1_nnz": 40,
+        "synthetic": true
+      },
+      "mesh": {
+        "cells": 8,
+        "nx": 2,
+        "ny": 2,
+        "nz": 2,
+        "volume": 8.0
+      },
+      "outer_iterations": 2,
+      "peak_memory_bytes": null,
+      "positivity": {
+        "clipped_flux_integral": 0.0,
+        "negative_cell_count": 0,
+        "negative_flux_before_floor": 2.3009641412700243e-06,
+        "rebalance_applied": false,
+        "relative_balance_change": 0.0
+      },
+      "quadrature": {
+        "directions": 24,
+        "order": 4,
+        "weight_sum": 12.566370614359172
+      },
+      "residual_final": 0.0,
+      "residual_history": [
+        1.0,
+        0.0
+      ],
+      "scalar_flux": {
+        "integral": 0.7163529257139155,
+        "l1": 0.7163529257139155,
+        "l2": 0.31544543390006036,
+        "linf": 0.27410025047153685,
+        "max": 0.27410025047153685,
+        "mean": 0.008954411571423944,
+        "min": 2.3009641412700243e-06,
+        "sum": 0.7163529257139155
+      },
+      "schema": "fusion_multigroup_benchmark_v1",
+      "source_conservation": {
+        "expected_source_strength": 1.0,
+        "external_source_integral": 1.0,
+        "relative_source_strength_error": 0.0,
+        "source_strength_error": 0.0
+      },
+      "wall_time_seconds": 0.4650971890000619
+    },
+    {
+      "case": {
+        "gmres_restart": 12,
+        "groups": 27,
+        "inner_tol": 1e-07,
+        "max_outer": 8,
+        "mesh_n": 2,
+        "name": "fast_27g_n2_s4",
+        "quadrature_order": 4,
+        "solver_tol": 1e-06,
+        "source_strength": 1.0,
+        "tier": "fast"
+      },
+      "converged": true,
+      "gmres_iterations_total": 10,
+      "group_count": 27,
+      "library": {
+        "description": "Synthetic software benchmark; not an experimental or benchmark-physics validation case.",
+        "physics_validation": false,
+        "sigma_s0_nnz": 108,
+        "sigma_s1_nnz": 108,
+        "synthetic": true
+      },
+      "mesh": {
+        "cells": 8,
+        "nx": 2,
+        "ny": 2,
+        "nz": 2,
+        "volume": 8.0
+      },
+      "outer_iterations": 2,
+      "peak_memory_bytes": null,
+      "positivity": {
+        "clipped_flux_integral": 0.0,
+        "negative_cell_count": 0,
+        "negative_flux_before_floor": 2.555507556106375e-12,
+        "rebalance_applied": false,
+        "relative_balance_change": 0.0
+      },
+      "quadrature": {
+        "directions": 24,
+        "order": 4,
+        "weight_sum": 12.566370614359172
+      },
+      "residual_final": 0.0,
+      "residual_history": [
+        1.0,
+        0.0
+      ],
+      "scalar_flux": {
+        "integral": 0.716609158790104,
+        "l1": 0.716609158790104,
+        "l2": 0.3154486631845159,
+        "linf": 0.2741001774109795,
+        "max": 0.2741001774109795,
+        "mean": 0.0033176349943986297,
+        "min": 2.555507556106375e-12,
+        "sum": 0.716609158790104
+      },
+      "schema": "fusion_multigroup_benchmark_v1",
+      "source_conservation": {
+        "expected_source_strength": 1.0,
+        "external_source_integral": 1.0,
+        "relative_source_strength_error": 0.0,
+        "source_strength_error": 0.0
+      },
+      "wall_time_seconds": 1.167251651000015
+    },
+    {
+      "case": {
+        "gmres_restart": 12,
+        "groups": 70,
+        "inner_tol": 1e-07,
+        "max_outer": 6,
+        "mesh_n": 3,
+        "name": "heavy_70g_n3_s4",
+        "quadrature_order": 4,
+        "solver_tol": 1e-05,
+        "source_strength": 1.0,
+        "tier": "heavy"
+      },
+      "converged": true,
+      "gmres_iterations_total": 13,
+      "group_count": 70,
+      "library": {
+        "description": "Synthetic software benchmark; not an experimental or benchmark-physics validation case.",
+        "physics_validation": false,
+        "sigma_s0_nnz": 280,
+        "sigma_s1_nnz": 280,
+        "synthetic": true
+      },
+      "mesh": {
+        "cells": 27,
+        "nx": 3,
+        "ny": 3,
+        "nz": 3,
+        "volume": 27.0
+      },
+      "outer_iterations": 2,
+      "peak_memory_bytes": null,
+      "positivity": {
+        "clipped_flux_integral": 2.573288329127325e-13,
+        "negative_cell_count": 269,
+        "negative_flux_before_floor": -1.935599804547e-14,
+        "rebalance_applied": false,
+        "relative_balance_change": 1.5204220235534256e-13
+      },
+      "quadrature": {
+        "directions": 24,
+        "order": 4,
+        "weight_sum": 12.566370614359172
+      },
+      "residual_final": 5.425233471485444e-08,
+      "residual_history": [
+        1.0,
+        5.425233471485444e-08
+      ],
+      "scalar_flux": {
+        "integral": 1.6924829351740258,
+        "l1": 1.6924829351740258,
+        "l2": 0.3833725659226377,
+        "linf": 0.28201000332850545,
+        "max": 0.28201000332850545,
+        "mean": 0.0008954936164941935,
+        "min": 0.0,
+        "sum": 1.6924829351740258
+      },
+      "schema": "fusion_multigroup_benchmark_v1",
+      "source_conservation": {
+        "expected_source_strength": 1.0,
+        "external_source_integral": 1.0,
+        "relative_source_strength_error": 0.0,
+        "source_strength_error": 0.0
+      },
+      "wall_time_seconds": 8.190972271999954
+    },
+    {
+      "case": {
+        "gmres_restart": 12,
+        "groups": 175,
+        "inner_tol": 1e-07,
+        "max_outer": 6,
+        "mesh_n": 2,
+        "name": "heavy_175g_n2_s4",
+        "quadrature_order": 4,
+        "solver_tol": 1e-05,
+        "source_strength": 1.0,
+        "tier": "heavy"
+      },
+      "converged": true,
+      "gmres_iterations_total": 10,
+      "group_count": 175,
+      "library": {
+        "description": "Synthetic software benchmark; not an experimental or benchmark-physics validation case.",
+        "physics_validation": false,
+        "sigma_s0_nnz": 700,
+        "sigma_s1_nnz": 700,
+        "synthetic": true
+      },
+      "mesh": {
+        "cells": 8,
+        "nx": 2,
+        "ny": 2,
+        "nz": 2,
+        "volume": 8.0
+      },
+      "outer_iterations": 2,
+      "peak_memory_bytes": null,
+      "positivity": {
+        "clipped_flux_integral": 2.1235361238450258e-17,
+        "negative_cell_count": 24,
+        "negative_flux_before_floor": -2.3677051587720337e-18,
+        "rebalance_applied": false,
+        "relative_balance_change": 2.9644405193039084e-17
+      },
+      "quadrature": {
+        "directions": 24,
+        "order": 4,
+        "weight_sum": 12.566370614359172
+      },
+      "residual_final": 0.0,
+      "residual_history": [
+        1.0,
+        0.0
+      ],
+      "scalar_flux": {
+        "integral": 0.7163362226419916,
+        "l1": 0.7163362226419916,
+        "l2": 0.3152759683192241,
+        "linf": 0.27398322030535893,
+        "max": 0.27398322030535893,
+        "mean": 0.0005116687304585654,
+        "min": 0.0,
+        "sum": 0.7163362226419916
+      },
+      "schema": "fusion_multigroup_benchmark_v1",
+      "source_conservation": {
+        "expected_source_strength": 1.0,
+        "external_source_integral": 1.0,
+        "relative_source_strength_error": 0.0,
+        "source_strength_error": 0.0
+      },
+      "wall_time_seconds": 7.87633071900018
+    }
+  ],
+  "schema": "fusion_multigroup_benchmark_report_v1"
+}

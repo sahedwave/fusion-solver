@@ -5,6 +5,7 @@ import itertools
 import math
 
 import numpy as np
+from scipy import sparse
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,20 @@ class BoundaryConditions:
         return "vacuum"
 
 
+def _as_scattering_csc(values: object, G: int, name: str) -> sparse.csc_matrix:
+    if sparse.issparse(values):
+        matrix = values.astype(np.float64).tocsc()
+    else:
+        matrix = sparse.csc_matrix(np.asarray(values, dtype=np.float64))
+    if matrix.shape != (G, G):
+        raise ValueError(f"{name} must have shape {(G, G)}, got {matrix.shape}")
+    matrix.sum_duplicates()
+    matrix.eliminate_zeros()
+    if not np.all(np.isfinite(matrix.data)):
+        raise ValueError(f"{name} contains non-finite values")
+    return matrix
+
+
 @dataclass(frozen=True)
 class P1Material:
     sigma_t: np.ndarray
@@ -74,12 +89,14 @@ class P1Material:
 
     def __post_init__(self) -> None:
         sigma_t = np.asarray(self.sigma_t, dtype=np.float64)
-        sigma_s0 = np.asarray(self.sigma_s0, dtype=np.float64)
-        sigma_s1 = np.asarray(self.sigma_s1, dtype=np.float64)
-
         if sigma_t.ndim != 1:
             raise ValueError(f"sigma_t must have shape (G,), got {sigma_t.shape}")
         G = sigma_t.shape[0]
+        sigma_s0_csc = _as_scattering_csc(self.sigma_s0, G, "sigma_s0")
+        sigma_s1_csc = _as_scattering_csc(self.sigma_s1, G, "sigma_s1")
+        sigma_s0 = sigma_s0_csc.toarray()
+        sigma_s1 = sigma_s1_csc.toarray()
+
         if sigma_s0.shape != (G, G):
             raise ValueError(f"sigma_s0 must have shape {(G, G)}, got {sigma_s0.shape}")
         if sigma_s1.shape != (G, G):
@@ -89,14 +106,16 @@ class P1Material:
                 raise ValueError(f"{name} contains non-finite values")
         if np.any(sigma_t <= 0.0):
             raise ValueError("sigma_t entries must be positive")
-        if np.any(sigma_s0 < 0.0):
+        if np.any(sigma_s0_csc.data < 0.0):
             raise ValueError("sigma_s0 entries must be non-negative")
 
         object.__setattr__(self, "sigma_t", sigma_t)
         object.__setattr__(self, "sigma_s0", sigma_s0)
         object.__setattr__(self, "sigma_s1", sigma_s1)
+        object.__setattr__(self, "sigma_s0_sparse", sigma_s0_csc)
+        object.__setattr__(self, "sigma_s1_sparse", sigma_s1_csc)
 
-        sigma_a = sigma_t - sigma_s0.sum(axis=1)
+        sigma_a = sigma_t - np.asarray(sigma_s0_csc.sum(axis=1)).ravel()
         if np.any(sigma_a <= 0.0):
             raise ValueError("P0 absorption sigma_t - sum_g' sigma_s0[g,g'] must be positive")
 
@@ -106,7 +125,7 @@ class P1Material:
 
     @property
     def sigma_a(self) -> np.ndarray:
-        return self.sigma_t - self.sigma_s0.sum(axis=1)
+        return self.sigma_t - np.asarray(self.sigma_s0_sparse.sum(axis=1)).ravel()
 
     @property
     def D(self) -> np.ndarray:

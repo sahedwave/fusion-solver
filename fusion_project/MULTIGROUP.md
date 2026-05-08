@@ -9,8 +9,15 @@ modules so existing transport APIs remain stable.
 `MaterialXS` requires:
 
 - `sigma_t`: shape `(G,)`
-- `sigma_s0`: shape `(G, G)`
-- `sigma_s1`: shape `(G, G)`
+- `sigma_s0`: shape `(G, G)` dense array or SciPy sparse matrix
+- `sigma_s1`: shape `(G, G)` dense array or SciPy sparse matrix
+
+The public `sigma_s0` and `sigma_s1` attributes remain dense NumPy arrays for
+legacy API compatibility.  Each material also exposes `sigma_s0_sparse` and
+`sigma_s1_sparse` as canonical CSC matrices.  Sweep-time scattering evaluates
+outgoing group columns from these sparse matrices, so sparse libraries touch
+only nonzero group-coupling entries and do not require constructing a full
+`(nx, ny, nz, n_dir, G)` scattering source.
 
 Optional data:
 
@@ -48,8 +55,14 @@ Use:
   environments
 
 All formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
-are present.  Older JSON and NPZ libraries that omit these fields remain valid
-and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
+are present.  Scattering is serialized in both dense form (`sigma_s0`,
+`sigma_s1`) and sparse COO triplet form (`sigma_s0_sparse`, `sigma_s1_sparse`)
+for JSON, NPZ, and HDF5.  The sparse schema is `format=coo_triplet_v1`,
+`shape=[G, G]`, and parallel `row`, `col`, `data` arrays using the convention
+`[source_group, outgoing_group]`.  Loaders prefer the sparse triplets when
+present and fall back to the dense arrays for older files.  Older JSON and NPZ
+libraries that omit these fields remain valid and load with
+`MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
 `sn_multigroup.py` still does not import `h5py` at module import time, so
 source checkouts or constrained environments that have not installed the full
 requirements can continue to import the multigroup module.  Attempting to read
@@ -70,6 +83,8 @@ The HDF5 schema is:
 /materials/<material-key>/sigma_t
 /materials/<material-key>/sigma_s0
 /materials/<material-key>/sigma_s1
+/materials/<material-key>/scattering_sparse/sigma_s0/{shape,row,col,data}
+/materials/<material-key>/scattering_sparse/sigma_s1/{shape,row,col,data}
 /materials/<material-key>/chi                 # optional
 /materials/<material-key>/nu_sigma_f          # optional
 /materials/<material-key>/heating             # optional
@@ -77,10 +92,6 @@ The HDF5 schema is:
 /materials/<material-key>/reaction_keys_json
 /materials/<material-key>/reactions/<reaction-name>
 ```
-
-Both formats round-trip the first-class `chi` and `nu_sigma_f` arrays when they
-are present.  Older JSON and NPZ libraries that omit these fields remain valid
-and load with `MaterialXS.chi is None` and `MaterialXS.nu_sigma_f is None`.
 
 ```python
 from sn_multigroup import load_multigroup_library
@@ -125,20 +136,104 @@ not nuclear design.
 
 ## Memory Scaling Warning
 
-The current dense scattering source has shape:
+The legacy all-direction scattering API still returns a dense array with shape:
 
 ```text
 (nx, ny, nz, n_dir, G)
 ```
 
 For a `50x50x50`, S8, `G=175` problem, angular flux plus dense scattering
-source alone is roughly 26 GiB before solver overhead.  The next production
-step is group-blocked or angle-blocked scattering/sweep evaluation.
+source alone is roughly 26 GiB before solver overhead.  The sweep path now uses
+per-direction/per-group sparse scattering columns and a single cell-shaped
+source buffer, avoiding that full dense scattering-source allocation.
 
-## Current Tested Scale
+## Multigroup Benchmark / Regression Tiers
 
-Standalone validation covers schema, load/save, source normalization, D-T
-mapping, and solver smoke tests at 10 and 27 groups.  The 70-group synthetic
-library is generated for loader/memory work but is not yet part of the regular
-solver smoke suite because the current Python sweep is too slow for routine
-large-group regression.
+The large-group checks are synthetic software benchmarks, not physics
+validation benchmarks.  They use `make_sparse_synthetic_library()` with a
+deterministic sparse upscatter/downscatter pattern, an isotropic normalized
+D-T spectrum source, vacuum Cartesian boundaries, and the existing GMRES-DSA
+solver.  No transport numerics are changed by the benchmark harness.
+
+### Fast CI tier
+
+The default fast tier runs 10-group and 27-group strict numerical regressions
+on a `2x2x2` mesh with S4 quadrature.  It checks more than finite/nonnegative
+flux: convergence status, outer iterations, total GMRES iterations, scalar
+flux norms/summaries, source-strength conservation, positivity diagnostics,
+mesh/quadrature metadata, and sparse scattering nonzero counts are compared
+against the baseline artifact.
+
+```bash
+python -m pytest fusion_project/test_multigroup_heavy.py -q
+```
+
+### Optional heavy tier
+
+The heavy tier is opt-in so routine CI is not destabilized by Python sweep
+performance.  It runs 70 groups on a `3x3x3` mesh and 175 groups on a `2x2x2`
+mesh, both with S4 quadrature.  These cases record wall time and peak RSS
+memory and enforce the same numerical/convergence/source checks as the fast
+tier.  Environment-sensitive performance thresholds are not enforced unless
+`FUSION_BENCHMARK_STRICT_PERF=1` is set.
+
+```bash
+python -m pytest fusion_project/test_multigroup_heavy.py -q -m heavy --run-heavy
+```
+
+Strict local performance comparison against the recorded baseline can be
+requested with:
+
+```bash
+FUSION_BENCHMARK_STRICT_PERF=1 python -m pytest fusion_project/test_multigroup_heavy.py -q -m heavy --run-heavy
+```
+
+### Benchmark report generation
+
+Machine-readable reports are generated by the harness in
+`multigroup_benchmarks.py`.  The report records:
+
+- group count, mesh size, and quadrature size
+- wall time and peak RSS memory when enabled
+- convergence status, outer iterations, and total GMRES iterations
+- residual history and final residual
+- scalar flux `l1`, `l2`, `linf`, sum, integral, min, max, and mean
+- source-strength conservation diagnostics
+- sparse scattering nonzero counts
+
+Fast report generation through pytest:
+
+```bash
+python -m pytest fusion_project/test_multigroup_heavy.py -q -m benchmark --run-benchmark
+```
+
+Direct CLI report generation:
+
+```bash
+python fusion_project/multigroup_benchmarks.py --tier fast --output fusion_project/data/benchmarks/latest_fast_report.json
+python fusion_project/multigroup_benchmarks.py --tier heavy --output fusion_project/data/benchmarks/latest_heavy_report.json
+python fusion_project/multigroup_benchmarks.py --tier all --output fusion_project/data/benchmarks/latest_all_report.json
+```
+
+Use `--no-memory` to disable peak RSS recording for timing-only runs.
+
+### Baseline artifact and tolerances
+
+The golden software-regression artifact is stored at:
+
+```text
+fusion_project/data/benchmarks/synthetic_multigroup_benchmark_baseline.json
+```
+
+It contains reference numerical summaries and reference runtime values for the
+synthetic cases.  Runtime and memory are recorded for visibility, but regular
+CI only enforces numerical/convergence/source regressions because wall time and
+peak RSS vary substantially across developer laptops, containers, and shared
+CI runners.
+
+Reference baseline in this repository was produced in a Linux container with
+Python-level sweeps.  Typical observed runtimes in that environment were about
+0.5--1.5 seconds for each fast case and about 8--9 seconds for each heavy case
+when peak RSS instrumentation used `resource.getrusage()` rather than Python
+allocation tracing.  These numbers are scaling sentinels for software
+regression only; they are not production HPC performance targets.
