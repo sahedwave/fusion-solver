@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -85,3 +87,32 @@ def test_from_gmsh_physical_boundary_mapping(tmp_path):
     assert not np.array_equal(xmin_faces, xmax_faces)
     assert "unassigned" in mesh.boundary_faces
     assert mesh.boundary_faces["unassigned"].size > 0
+
+
+def test_box_8x8x8_gmsh_mesh_geometry_and_boundaries():
+    mesh_path = Path(__file__).resolve().parent / "data" / "meshes" / "box_8x8x8.msh"
+    expected_boundary_tags = {
+        "xmin": 1,
+        "xmax": 2,
+        "ymin": 3,
+        "ymax": 4,
+        "zmin": 5,
+        "zmax": 6,
+    }
+
+    assert mesh_path.exists()
+
+    mesh = MeshBuilder.from_gmsh(mesh_path, boundary_tags=expected_boundary_tags)
+    assert mesh.N_cells == 8 * 8 * 8
+    assert mesh.cell_volume.sum() > 0.0
+    assert np.all(mesh.cell_volume > 0.0)
+    assert np.allclose(np.linalg.norm(mesh.face_normal, axis=1), 1.0, rtol=0.0, atol=1.0e-12)
+    assert set(mesh.boundary_faces) == set(expected_boundary_tags)
+    assert all(mesh.boundary_faces[name].size > 0 for name in expected_boundary_tags)
+
+    tagged_face_sets = {
+        tuple(np.sort(mesh.boundary_faces[name]).tolist())
+        for name in expected_boundary_tags
+    }
+    assert len(tagged_face_sets) > 1
+

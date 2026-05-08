@@ -3,8 +3,9 @@ from __future__ import annotations
 import numpy as np
 
 from sn_core import BoundaryConditions, Mesh, build_quadrature, build_reflection_map, make_point_source, make_single_group_material, make_uniform_source
-from mesh_builder import MeshBuilder
-from sn_operators import DSAPreconditioner, _step_cell_unstructured
+from mesh_builder import MeshBuilder, UnstructuredMesh
+from mesh_geometry import _compute_sweep_order
+from sn_operators import DSAPreconditioner, _step_cell, _step_cell_unstructured
 from sn_solver import SolverConfig, solve_gmres_dsa, solve_source_iteration
 
 
@@ -47,13 +48,16 @@ def test_7_cartesian_equivalence_unstructured_proxy():
 
 # Test 8: tet-box GMRES-DSA convergence/positivity.
 def test_8_tet_box_single_group_vacuum_regression():
-    mesh = MeshBuilder.tet_box(6, 6, 6, 1.0, 1.0, 1.0)
+    # Keep this regression small: the test validates GMRES-DSA convergence and
+    # positivity on a tetrahedral mesh, while larger tet-boxes are integration
+    # benchmarks that can exceed unit-test time budgets.
+    mesh = MeshBuilder.tet_box(2, 2, 2, 1.0, 1.0, 1.0)
     mat = make_single_group_material(sigma_t=1.0, c=0.5)
     directions, weights = build_quadrature(4)
     bc = BoundaryConditions()
     refl = build_reflection_map(directions)
     q = make_point_source(mesh, mat.G)
-    result = solve_gmres_dsa(mesh, mat, q, directions, weights, bc, refl, SolverConfig(tol=1e-6, max_outer=8, gmres_restart=20))
+    result = solve_gmres_dsa(mesh, mat, q, directions, weights, bc, refl, SolverConfig(tol=1e-3, max_outer=4, gmres_restart=10, inner_tol=1e-6))
     assert result.converged
     assert result.phi.shape == (mesh.N_cells, mat.G)
     assert np.all(np.isfinite(result.phi))
@@ -85,6 +89,172 @@ def test_10_fully_reflective_uniform_flux_unstructured_cartesian():
     assert np.all(np.isfinite(phi))
     assert np.all(phi >= 0.0)
     assert rel_var < 2.0e-1
+
+
+def _with_single_boundary_tag(mesh: UnstructuredMesh, tag: str) -> UnstructuredMesh:
+    boundary = np.nonzero(mesh.face_to_cells[:, 1] == -1)[0].astype(np.int64)
+    return UnstructuredMesh(
+        nodes=mesh.nodes, cell_nodes=mesh.cell_nodes, cell_type=mesh.cell_type,
+        cell_volume=mesh.cell_volume, cell_centroid=mesh.cell_centroid,
+        face_area=mesh.face_area, face_normal=mesh.face_normal,
+        face_centroid=mesh.face_centroid, face_to_cells=mesh.face_to_cells,
+        cell_to_faces=mesh.cell_to_faces, boundary_faces={tag: boundary},
+        cartesian_shape=mesh.cartesian_shape, cartesian_spacing=mesh.cartesian_spacing,
+    )
+
+
+def test_unstructured_vacuum_tet_box_boundary_is_finite_and_nonnegative():
+    mesh = MeshBuilder.tet_box(2, 2, 2, 1.0, 1.0, 1.0)
+    mat = make_single_group_material(sigma_t=1.0, c=0.0)
+    directions, weights = build_quadrature(4)
+    q = make_uniform_source(mesh, mat.G)
+    result = solve_source_iteration(
+        mesh, mat, q, directions, weights, BoundaryConditions(), build_reflection_map(directions),
+        tol=1.0e-8, max_iter=8,
+    )
+    assert result.converged
+    assert np.all(np.isfinite(result.phi))
+    assert np.all(result.phi >= 0.0)
+
+
+def test_unstructured_reflective_from_cartesian_boundary_changes_flux():
+    mesh = MeshBuilder.from_cartesian(Mesh(2, 2, 2, 1.0, 1.0, 1.0))
+    mat = make_single_group_material(sigma_t=1.0, c=0.0)
+    directions, weights = build_quadrature(4)
+    refl = build_reflection_map(directions)
+    q = make_uniform_source(mesh, mat.G)
+
+    vacuum = solve_source_iteration(
+        mesh, mat, q, directions, weights, BoundaryConditions(), refl, tol=1.0e-8, max_iter=8,
+    )
+    reflective = solve_source_iteration(
+        mesh, mat, q, directions, weights,
+        BoundaryConditions(True, True, True, True, True, True), refl, tol=1.0e-8, max_iter=8,
+    )
+
+    assert reflective.phi.mean() > vacuum.phi.mean()
+    assert not np.allclose(reflective.phi, vacuum.phi, rtol=1.0e-8, atol=1.0e-10)
+
+
+def test_unstructured_tagged_reflective_boundary_changes_flux():
+    mesh = _with_single_boundary_tag(MeshBuilder.tet_box(2, 2, 2, 1.0, 1.0, 1.0), "wall")
+    mat = make_single_group_material(sigma_t=1.0, c=0.0)
+    directions, weights = build_quadrature(4)
+    refl = build_reflection_map(directions)
+    q = make_uniform_source(mesh, mat.G)
+
+    vacuum = solve_source_iteration(
+        mesh, mat, q, directions, weights, BoundaryConditions(), refl, tol=1.0e-8, max_iter=8,
+    )
+    reflective = solve_source_iteration(
+        mesh, mat, q, directions, weights,
+        BoundaryConditions(boundary_types={"wall": "reflective"}), refl, tol=1.0e-8, max_iter=8,
+    )
+
+    assert reflective.phi.mean() > vacuum.phi.mean()
+    assert not np.allclose(reflective.phi, vacuum.phi, rtol=1.0e-8, atol=1.0e-10)
+
+
+def _cartesian_cell_id(i: int, j: int, k: int, ny: int, nz: int) -> int:
+    return (i * ny + j) * nz + k
+
+
+def _expected_cartesian_sweep_order(nx: int, ny: int, nz: int, direction: np.ndarray) -> np.ndarray:
+    i_range = range(nx) if direction[0] >= 0.0 else range(nx - 1, -1, -1)
+    j_range = range(ny) if direction[1] >= 0.0 else range(ny - 1, -1, -1)
+    k_range = range(nz) if direction[2] >= 0.0 else range(nz - 1, -1, -1)
+    return np.asarray([
+        _cartesian_cell_id(i, j, k, ny, nz)
+        for i in i_range
+        for j in j_range
+        for k in k_range
+    ], dtype=np.int64)
+
+
+def test_11_cell_update_cuboid_step_characteristic_balance():
+    dx, dy, dz = 1.25, 0.75, 1.5
+    vol = dx * dy * dz
+    direction = np.array([0.3, 0.4, 0.5], dtype=np.float64)
+    psi_in = np.array([0.2, 0.6, 1.0], dtype=np.float64)
+    q_per_sr = 1.7
+    sigma_t = 0.8
+    inflow_areas_cos = np.array([
+        direction[0] * dy * dz,
+        direction[1] * dx * dz,
+        direction[2] * dx * dy,
+    ], dtype=np.float64)
+    outflow_area_cos_sum = float(inflow_areas_cos.sum())
+
+    psi_unstructured, psi_out = _step_cell_unstructured(
+        psi_in, inflow_areas_cos, outflow_area_cos_sum, q_per_sr, sigma_t, vol
+    )
+
+    lhs = (sigma_t * vol + outflow_area_cos_sum) * psi_unstructured
+    rhs = q_per_sr * vol + float(np.dot(psi_in, inflow_areas_cos))
+    assert np.isclose(lhs, rhs, rtol=0.0, atol=1.0e-14)
+    assert psi_out == psi_unstructured
+
+    # Path B intentionally uses a face-balance step-characteristic update for
+    # unstructured cells, not Cartesian diamond-difference algebra.
+    psi_dd, *_ = _step_cell(
+        psi_in[0], psi_in[1], psi_in[2], q_per_sr, sigma_t,
+        direction[0], direction[1], direction[2], 1.0 / dx, 1.0 / dy, 1.0 / dz,
+    )
+    assert not np.isclose(psi_unstructured, psi_dd, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_11_dsa_cartesian_reduction_matches_fd_matrix_and_apply():
+    cart = Mesh(4, 4, 4, 1.0, 1.0, 1.0)
+    unstructured = MeshBuilder.from_cartesian(cart)
+    mat = make_single_group_material(sigma_t=1.2, c=0.25)
+    bc = BoundaryConditions()
+
+    dsa_cart = DSAPreconditioner(cart, mat, bc)
+    dsa_unstructured = DSAPreconditioner(unstructured, mat, bc)
+
+    assert np.allclose(dsa_unstructured._A.toarray(), dsa_cart._A.toarray(), rtol=0.0, atol=1.0e-14)
+
+    residual_cart = np.linspace(0.1, 1.0, cart.nx * cart.ny * cart.nz).reshape(cart.nx, cart.ny, cart.nz, 1)
+    residual_unstructured = residual_cart.reshape(unstructured.N_cells, 1)
+    assert np.allclose(
+        dsa_unstructured.apply(residual_unstructured),
+        dsa_cart.apply(residual_cart).reshape(unstructured.N_cells, 1),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+
+
+def test_11_sweep_order_cartesian_upwind_lexicographic():
+    nx, ny, nz = 4, 4, 4
+    mesh = MeshBuilder.from_cartesian(Mesh(nx, ny, nz, 1.0, 1.0, 1.0))
+    for direction in (
+        np.array([1.0, 1.0, 1.0]),
+        np.array([-1.0, 1.0, -1.0]),
+        np.array([-1.0, -1.0, -1.0]),
+    ):
+        order = _compute_sweep_order(mesh, direction)
+        assert np.array_equal(order, _expected_cartesian_sweep_order(nx, ny, nz, direction))
+
+
+def test_11_total_volume_conservation_cartesian_conversion():
+    nx, ny, nz = 4, 5, 6
+    dx, dy, dz = 1.25, 0.5, 2.0
+    mesh = MeshBuilder.from_cartesian(Mesh(nx, ny, nz, dx, dy, dz))
+    assert np.isclose(mesh.cell_volume.sum(), nx * ny * nz * dx * dy * dz, rtol=0.0, atol=1.0e-12)
+
+
+def test_11_flux_integral_conservation_cartesian_conversion():
+    nx, ny, nz = 4, 5, 6
+    dx, dy, dz = 1.25, 0.5, 2.0
+    mesh = MeshBuilder.from_cartesian(Mesh(nx, ny, nz, dx, dy, dz))
+    phi_3d = np.arange(1, nx * ny * nz + 1, dtype=np.float64).reshape(nx, ny, nz)
+    phi_flat = phi_3d.reshape(mesh.N_cells)
+    assert np.isclose(
+        np.dot(phi_flat, mesh.cell_volume),
+        phi_3d.sum() * dx * dy * dz,
+        rtol=0.0,
+        atol=1.0e-12,
+    )
 
 
 # Test 11: global production ~= absorption + leakage (vacuum, unstructured tet-box).

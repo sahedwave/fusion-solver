@@ -83,6 +83,18 @@ def upwind_cell(face_id: int, direction: np.ndarray, face_to_cells: np.ndarray, 
 
 
 def _compute_sweep_order(mesh, direction: np.ndarray) -> np.ndarray:
+    cart_shape = getattr(mesh, "cartesian_shape", None)
+    if cart_shape is not None:
+        nx, ny, nz = map(int, cart_shape)
+        direction = np.asarray(direction, dtype=np.float64)
+        i_range = range(nx) if direction[0] >= 0.0 else range(nx - 1, -1, -1)
+        j_range = range(ny) if direction[1] >= 0.0 else range(ny - 1, -1, -1)
+        k_range = range(nz) if direction[2] >= 0.0 else range(nz - 1, -1, -1)
+        return np.asarray(
+            [(i * ny + j) * nz + k for i in i_range for j in j_range for k in k_range],
+            dtype=np.int64,
+        )
+
     n_cells = mesh.N_cells
     indeg = np.zeros(n_cells, dtype=np.int64)
     adj: list[list[int]] = [[] for _ in range(n_cells)]
