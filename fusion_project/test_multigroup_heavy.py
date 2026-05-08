@@ -1,55 +1,121 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import numpy as np
+import pytest
 
-from sn_core import (
-    BoundaryConditions,
-    Mesh,
-    build_quadrature,
-    build_reflection_map,
-    dt_source_spectrum,
-    make_spectrum_source,
+from multigroup_benchmarks import (
+    BENCHMARK_DATA_DIR,
+    FAST_CASES,
+    HEAVY_CASES,
+    MultigroupBenchmarkCase,
+    run_multigroup_benchmark,
+    run_cases,
+    write_report,
 )
-from sn_multigroup import make_synthetic_library
-from sn_solver import SolverConfig, solve_gmres_dsa
+
+BASELINE_PATH = BENCHMARK_DATA_DIR / "synthetic_multigroup_benchmark_baseline.json"
+NUMERIC_RTOL = 2.0e-10
+NUMERIC_ATOL = 2.0e-12
+STRICT_PERF_ENV = "FUSION_BENCHMARK_STRICT_PERF"
+GENERATE_REPORT_ENV = "FUSION_BENCHMARK_REPORT"
 
 
-def _check(name: str, condition: bool, detail: str = "") -> None:
-    if not condition:
-        raise AssertionError(f"{name} failed" + (f": {detail}" if detail else ""))
-    print(f"[PASS] {name}" + (f" - {detail}" if detail else ""))
+def _load_baselines() -> dict[str, dict]:
+    data = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    return {entry["case"]["name"]: entry for entry in data["results"]}
 
 
-def _smoke(G: int, nx: int) -> None:
-    lib = make_synthetic_library(G)
-    mat = next(iter(lib.materials.values())).to_p1_material()
-    mesh = Mesh(nx, nx, nx, 1.0, 1.0, 1.0)
-    dirs, wts = build_quadrature(4)
-    Q = make_spectrum_source(mesh, dt_source_spectrum(lib.energy_bounds), strength=1.0)
-    result = solve_gmres_dsa(
-        mesh,
-        mat,
-        Q,
-        dirs,
-        wts,
-        BoundaryConditions(),
-        build_reflection_map(dirs),
-        SolverConfig(tol=1.0e-5, max_outer=6, gmres_restart=12, inner_tol=1.0e-7),
-    )
-    _check(f"{G}g finite", bool(np.all(np.isfinite(result.phi))))
-    _check(f"{G}g nonnegative", float(result.phi.min()) >= 0.0)
-    _check(f"{G}g nonzero", float(result.phi.sum()) > 0.0)
-    _check(f"{G}g iterations bounded", result.n_gmres_total > 0)
+def _assert_close(name: str, got: float, expected: float, *, rtol: float = NUMERIC_RTOL, atol: float = NUMERIC_ATOL) -> None:
+    assert np.isclose(got, expected, rtol=rtol, atol=atol), f"{name}: got {got:.17g}, expected {expected:.17g}"
 
 
-def test_heavy_multigroup_smoke() -> None:
-    _smoke(70, 2)
-    _smoke(175, 2)
+def _assert_common_regression_metrics(metrics: dict, baseline: dict) -> None:
+    case = metrics["case"]
+    expected_case = baseline["case"]
+    assert case == expected_case
+    assert metrics["schema"] == "fusion_multigroup_benchmark_v1"
+    assert metrics["group_count"] == expected_case["groups"]
+    assert metrics["mesh"] == baseline["mesh"]
+    assert metrics["quadrature"] == baseline["quadrature"]
+    assert metrics["library"]["synthetic"] is True
+    assert metrics["library"]["physics_validation"] is False
+    assert metrics["library"]["sigma_s0_nnz"] == baseline["library"]["sigma_s0_nnz"]
+    assert metrics["library"]["sigma_s1_nnz"] == baseline["library"]["sigma_s1_nnz"]
+
+    assert metrics["converged"] is True
+    assert metrics["outer_iterations"] <= max(baseline["outer_iterations"] + 1, baseline["outer_iterations"])
+    assert 0 < metrics["gmres_iterations_total"] <= max(2 * baseline["gmres_iterations_total"], baseline["gmres_iterations_total"] + 4)
+    assert metrics["residual_final"] <= max(1.0e-5, 20.0 * baseline["residual_final"] + 1.0e-14)
+
+    source = metrics["source_conservation"]
+    _assert_close("external source integral", source["external_source_integral"], baseline["source_conservation"]["external_source_integral"])
+    assert source["relative_source_strength_error"] <= 1.0e-13
+
+    flux = metrics["scalar_flux"]
+    expected_flux = baseline["scalar_flux"]
+    for key in ("l1", "l2", "linf", "sum", "integral", "max", "mean"):
+        _assert_close(f"scalar_flux.{key}", flux[key], expected_flux[key], rtol=5.0e-10, atol=5.0e-12)
+    assert flux["min"] >= -1.0e-13
+    assert flux["max"] > 0.0
+    assert flux["l1"] > 0.0
+
+    positivity = metrics["positivity"]
+    assert positivity["relative_balance_change"] <= 1.0e-10
+    assert positivity["rebalance_applied"] is False
+
+
+def _assert_optional_performance(metrics: dict, baseline: dict) -> None:
+    if os.environ.get(STRICT_PERF_ENV) != "1":
+        pytest.skip(f"set {STRICT_PERF_ENV}=1 to enforce environment-sensitive runtime/memory thresholds")
+    assert metrics["wall_time_seconds"] <= max(2.5 * baseline["wall_time_seconds"], baseline["wall_time_seconds"] + 5.0)
+    if metrics["peak_memory_bytes"] is not None and baseline["peak_memory_bytes"] is not None:
+        assert metrics["peak_memory_bytes"] <= max(
+            int(3.0 * baseline["peak_memory_bytes"]),
+            baseline["peak_memory_bytes"] + 20_000_000,
+        )
+
+
+@pytest.mark.parametrize("case", FAST_CASES, ids=[case.name for case in FAST_CASES])
+def test_fast_multigroup_benchmark_regression(case: MultigroupBenchmarkCase) -> None:
+    baselines = _load_baselines()
+    metrics = run_multigroup_benchmark(case, collect_peak_memory=False)
+    _assert_common_regression_metrics(metrics, baselines[case.name])
+
+
+@pytest.mark.heavy
+@pytest.mark.parametrize("case", HEAVY_CASES, ids=[case.name for case in HEAVY_CASES])
+def test_heavy_multigroup_benchmark_regression(case: MultigroupBenchmarkCase) -> None:
+    baselines = _load_baselines()
+    metrics = run_multigroup_benchmark(case, collect_peak_memory=True)
+    _assert_common_regression_metrics(metrics, baselines[case.name])
+    if os.environ.get(STRICT_PERF_ENV) == "1":
+        _assert_optional_performance(metrics, baselines[case.name])
+
+
+@pytest.mark.benchmark
+def test_multigroup_benchmark_report_generation(tmp_path: Path) -> None:
+    output = Path(os.environ.get(GENERATE_REPORT_ENV, tmp_path / "multigroup_benchmark_report.json"))
+    report = run_cases(FAST_CASES, collect_peak_memory=True)
+    write_report(report, output)
+    loaded = json.loads(output.read_text(encoding="utf-8"))
+    assert loaded["schema"] == "fusion_multigroup_benchmark_report_v1"
+    assert [entry["case"]["name"] for entry in loaded["results"]] == [case.name for case in FAST_CASES]
+    for entry in loaded["results"]:
+        assert entry["wall_time_seconds"] > 0.0
+        assert entry["peak_memory_bytes"] is not None
+        assert entry["source_conservation"]["relative_source_strength_error"] <= 1.0e-13
 
 
 def main() -> None:
-    test_heavy_multigroup_smoke()
-    print("Heavy multigroup smoke validation complete.")
+    baselines = _load_baselines()
+    for case in FAST_CASES + HEAVY_CASES:
+        metrics = run_multigroup_benchmark(case, collect_peak_memory=True)
+        _assert_common_regression_metrics(metrics, baselines[case.name])
+    print("Multigroup benchmark regression complete.")
 
 
 if __name__ == "__main__":
