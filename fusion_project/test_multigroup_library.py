@@ -74,6 +74,8 @@ def _make_fission_material() -> MaterialXS:
         sigma_t=sigma_t,
         sigma_s0=sigma_s0,
         sigma_s1=sigma_s1,
+        # Keep these payloads in the fission fixture so JSON/NPZ/HDF5
+        # roundtrips cover all first-class and legacy material fields.
         reactions={"fission": np.array([0.01, 0.02, 0.03], dtype=np.float64)},
         heating=np.array([1.0, 2.0, 3.0], dtype=np.float64),
         metadata={"kind": "test_fissionable"},
