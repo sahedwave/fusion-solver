@@ -31,9 +31,12 @@ For the 3-group model:
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from fusion.materials import FusionMaterial
 from fusion.mesh_utils import integrate_spatial
+
+LEGACY_API_REMOVAL_MILESTONE = "remove after release +2"
 
 
 def compute_tbr(
@@ -126,6 +129,7 @@ def compute_tbr_components(
     source_strength_val: float,
     li_region_mask:      np.ndarray | None = None,
     legacy_group_semantics: bool = False,
+    strict_dynamic_g: bool = False,
 ) -> dict:
     """
     Compute TBR split explicitly into Li-6 and Li-7 contributions.
@@ -197,22 +201,22 @@ def compute_tbr_components(
     nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
 
     channels = nat_mat.breeding_channels or {}
-    if "li6_breeding" in channels or "li7_breeding" in channels:
+    if strict_dynamic_g and legacy_group_semantics:
+        raise ValueError("strict_dynamic_g=True forbids legacy_group_semantics fallback; provide explicit breeding_channels.")
+    if legacy_group_semantics:
+        if G != 3:
+            raise ValueError("legacy_group_semantics compatibility mode requires G==3")
+        sigma_a_li6 = nat_mat.sigma_a.copy()
+        sigma_a_li6[0] = 0.0
+        sigma_a_li7 = np.zeros(G)
+        sigma_a_li7[0] = nat_mat.sigma_a[0]
+    elif "li6_breeding" in channels or "li7_breeding" in channels:
         if "li6_breeding" not in channels or "li7_breeding" not in channels:
             raise ValueError("breeding_channels must provide both 'li6_breeding' and 'li7_breeding'")
         sigma_a_li6 = np.asarray(channels["li6_breeding"], dtype=np.float64)
         sigma_a_li7 = np.asarray(channels["li7_breeding"], dtype=np.float64)
         if sigma_a_li6.shape != (G,) or sigma_a_li7.shape != (G,):
             raise ValueError(f"breeding channel vectors must have shape {(G,)}")
-    elif G == 3 and legacy_group_semantics:
-        # Compatibility-only legacy mode for historical 3-group behavior.
-        # Li-6 component: keep epi (g=1) and thermal (g=2), zero fast (g=0)
-        sigma_a_li6 = nat_mat.sigma_a.copy()
-        sigma_a_li6[0] = 0.0
-
-        # Li-7 component: keep fast (g=0) only
-        sigma_a_li7 = np.zeros(G)
-        sigma_a_li7[0] = nat_mat.sigma_a[0]
     else:
         raise ValueError(
             "compute_tbr_components requires explicit breeding_channels metadata "
@@ -253,6 +257,33 @@ def compute_tbr_components(
         "li6_fraction": li6_frac,
     }
 
+
+
+def compute_tbr_components_legacy_g3(
+    phi: np.ndarray,
+    li6_enrichment: float,
+    mesh,
+    source_strength_val: float,
+    li_region_mask: np.ndarray | None = None,
+) -> dict:
+    """Compatibility-only legacy 3-group Li6/Li7 split."""
+    warnings.warn(
+        f"compute_tbr_components_legacy_g3 is deprecated ({LEGACY_API_REMOVAL_MILESTONE}); provide explicit breeding_channels in compute_tbr_components.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    G = phi.shape[-1]
+    if G != 3:
+        raise ValueError("compute_tbr_components_legacy_g3 requires G==3")
+    return compute_tbr_components(
+        phi,
+        li6_enrichment=li6_enrichment,
+        mesh=mesh,
+        source_strength_val=source_strength_val,
+        li_region_mask=li_region_mask,
+        legacy_group_semantics=True,
+        strict_dynamic_g=False,
+    )
 
 def tbr_sensitivity_enrichment(
     phi:                 np.ndarray,
