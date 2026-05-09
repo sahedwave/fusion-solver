@@ -25,10 +25,8 @@ processed with NJOY2021 for an ITER-like neutron spectrum
 
 For G != 3: _uniform_fill applies a 1/(1+g) spectral weight decay
 from the fast-group value so the module works with any energy group
-structure used by the solver. These generated vectors are compatibility-only
-transport post-processing defaults, not external-physics validated for
-arbitrary G, and not inferred Li-6/Li-7 breeding-channel semantics.
-Production claims require explicit reaction-channel metadata.
+structure used by the solver. These generated vectors are transport
+post-processing defaults, not inferred Li-6/Li-7 breeding-channel semantics.
 
 All arrays must have length G.  FusionMaterial.__post_init__ enforces
 this at construction time.
@@ -192,8 +190,7 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
         # Natural-composition reference values [cm^-1]
         sigma_a_nat = np.array([0.004, 0.010, 0.180])
         # fast group driven by Li-7 threshold; epi/thermal by Li-6
-        # This mapping is compatibility metadata for legacy 3-group consumers only.
-        # Production claims require explicit channel metadata aligned to solved G.
+        # This mapping is compatibility metadata for legacy 3-group consumers.
         sigma_a_scaled = sigma_a_nat * np.array([scale_li7, scale_li6, scale_li6])
 
         return FusionMaterial(

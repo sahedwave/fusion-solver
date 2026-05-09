@@ -171,7 +171,6 @@ def compute_tbr_components(
     Notes
     -----
     Compatibility-only legacy mode (G=3 only, opt-in):
-        This fallback is not external-physics validated for arbitrary ``G``.
         Li-6 reactions dominate groups 1 (epi) and 2 (thermal).
         Li-7 reactions dominate group 0 (fast) via threshold reaction.
         The split is encoded via the enrichment scaling in Li4SiO4():
@@ -180,10 +179,9 @@ def compute_tbr_components(
           sigma_a[therm] scales with Li-6 fraction → assigned to tbr_li6
 
     Outside compatibility-only legacy mode, explicit ``breeding_channels``
-    metadata must be provided on the breeder material (``li6_breeding`` and
-    ``li7_breeding`` vectors of shape ``(G,)``). Non-legacy paths never infer
-    group semantics; production claims require explicit channels/metadata
-    generated for the solved energy structure.
+    must be provided on the breeder material (``li6_breeding`` and
+    ``li7_breeding`` vectors of shape ``(G,)``). No implicit group-index
+    split is used in non-legacy paths.
     """
     from fusion.materials import Li4SiO4
     import copy, dataclasses
@@ -215,11 +213,10 @@ def compute_tbr_components(
         sigma_a_li7[0] = nat_mat.sigma_a[0]
     else:
         raise ValueError(
-            "compute_tbr_components requires explicit breeding_channels metadata "
-            "('li6_breeding' and 'li7_breeding') for production claims and all "
-            "non-legacy paths. Set legacy_group_semantics=True only for "
-            "compatibility-only legacy mode (G==3), which is not external-physics "
-            "validated for arbitrary G."
+            "compute_tbr_components requires explicit breeding_channels "
+            "('li6_breeding' and 'li7_breeding') for non-legacy paths. "
+            "Set legacy_group_semantics=True to enable compatibility-only "
+            "legacy mode for G==3."
         )
 
     # Build synthetic single-reaction materials by replacing sigma_a
