@@ -171,9 +171,10 @@ claiming production-grade, group-agnostic fusion post-processing:
 - `make_dt_source(..., energy_bounds=None)` places 14.1 MeV neutrons in group 0
   by convention.  Production workflows should provide energy bounds or an
   explicit source-group mapping so the D-T source group is data-driven.
-- `compute_tbr_components()` assumes Li-7 contribution lives in group 0 and
-  Li-6 contribution lives in groups 1--2 for the 3-group model; for general
-  `G`, it still treats group 0 as Li-7 and all nonzero groups as Li-6.
+- `compute_tbr_components()` legacy split (Li-7 in group 0, Li-6 in groups 1--2)
+  is compatibility-only and opt-in (`legacy_group_semantics=True`, `G==3`).
+  It is not external-physics validated for arbitrary `G`, and production claims
+  require explicit `breeding_channels` metadata.
 - Li-bearing material factories encode enrichment effects through the current
   3-group fast/epi/thermal arrays or the synthetic `_uniform_fill` fallback.
   Production TBR splitting should instead consume explicit `Li6`/`Li7`
