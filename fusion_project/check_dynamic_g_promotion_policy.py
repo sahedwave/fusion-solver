@@ -14,6 +14,7 @@ PYTEST_INI = ROOT / "pytest.ini"
 TEST_LIB = ROOT / "fusion_project" / "test_multigroup_library.py"
 CHECKLIST_PATH = ROOT / "fusion_project" / "dynamic_g_promotion_checklist.yaml"
 HEAVY_ARTIFACT_META = ROOT / "fusion_project" / "data" / "benchmarks" / "heavy_ci_status.json"
+LEGACY_BASELINE_PATH = ROOT / "fusion_project" / "legacy_surface_baseline.json"
 
 _DYNAMIC_G_ROW_RE = re.compile(r"\|\s*Dynamic G\s*\|\s*\*\*(partial|complete)\*\*\s*\|", re.IGNORECASE)
 _FIXED_GROUP_RE = re.compile(r"\b(group\s*0|G\s*=\s*3|3-group)\b", re.IGNORECASE)
@@ -125,6 +126,38 @@ def _require_metadata_driven_default_apis() -> None:
     if "def compute_tbr_components_legacy_g3(" not in tbr_text:
         raise SystemExit("Dynamic G promotion blocked: explicit legacy TBR compatibility API missing")
 
+
+def _require_legacy_surface_nonincreasing() -> None:
+    baseline = json.loads(_read(LEGACY_BASELINE_PATH))["legacy_helper_callsites"]
+    total = 0
+    offenders: list[str] = []
+    for path in (ROOT / "fusion_project").rglob("*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if "/test_" in rel or rel.endswith("/fusion/source.py") or rel.endswith("/fusion/tbr.py"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        count = text.count("make_dt_source_legacy_group0(") + text.count("compute_tbr_components_legacy_g3(")
+        if count:
+            offenders.append(f"{rel}:{count}")
+            total += count
+    if offenders:
+        raise SystemExit("Dynamic G promotion blocked: legacy helper use in non-legacy runtime modules: " + ", ".join(offenders[:10]))
+    if total > baseline:
+        raise SystemExit(f"Dynamic G promotion blocked: legacy helper surface increased ({total}>{baseline})")
+
+
+def _require_no_legacy_helper_imports_in_runtime() -> None:
+    offenders: list[str] = []
+    for path in (ROOT / "fusion_project").rglob("*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if "/test_" in rel or rel.endswith("/fusion/source.py") or rel.endswith("/fusion/tbr.py"):
+            continue
+        txt = path.read_text(encoding="utf-8")
+        if "make_dt_source_legacy_group0" in txt or "compute_tbr_components_legacy_g3" in txt:
+            offenders.append(rel)
+    if offenders:
+        raise SystemExit("Dynamic G promotion blocked: legacy helper imports/usages in runtime modules: " + ", ".join(offenders[:10]))
+
 def _run_g_matrix_tests() -> None:
     result = subprocess.run([sys.executable, "-m", "pytest", "-m", "g_matrix", "-q"], cwd=ROOT, check=False)
     if result.returncode != 0:
@@ -142,6 +175,8 @@ def main() -> int:
     _require_no_untagged_fixed_group_assumptions(checklist)
     _require_collected_evidence(checklist)
     _require_metadata_driven_default_apis()
+    _require_legacy_surface_nonincreasing()
+    _require_no_legacy_helper_imports_in_runtime()
     _require_heavy_artifact_freshness(checklist)
     _run_g_matrix_tests()
     print("Dynamic G policy check: promotion evidence satisfied.")

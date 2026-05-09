@@ -31,9 +31,12 @@ For the 3-group model:
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from fusion.materials import FusionMaterial
 from fusion.mesh_utils import integrate_spatial
+
+LEGACY_API_REMOVAL_MILESTONE = "remove after release +2"
 
 
 def compute_tbr(
@@ -264,6 +267,11 @@ def compute_tbr_components_legacy_g3(
     li_region_mask: np.ndarray | None = None,
 ) -> dict:
     """Compatibility-only legacy 3-group Li6/Li7 split."""
+    warnings.warn(
+        f"compute_tbr_components_legacy_g3 is deprecated ({LEGACY_API_REMOVAL_MILESTONE}); provide explicit breeding_channels in compute_tbr_components.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     G = phi.shape[-1]
     if G != 3:
         raise ValueError("compute_tbr_components_legacy_g3 requires G==3")

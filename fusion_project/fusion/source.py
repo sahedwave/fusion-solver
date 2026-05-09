@@ -36,9 +36,12 @@ NO solver internals are touched or imported here.
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from fusion.mesh_utils import integrate_spatial
 from sn_core import dt_source_spectrum, make_spectrum_source
+
+LEGACY_API_REMOVAL_MILESTONE = "remove after release +2"
 
 
 def make_dt_source_legacy_group0(
@@ -50,6 +53,11 @@ def make_dt_source_legacy_group0(
     gaussian_sigma_cm: float | None = None,
 ) -> np.ndarray:
     """Compatibility-only legacy D-T source mapping that deposits source in group 0."""
+    warnings.warn(
+        f"make_dt_source_legacy_group0 is deprecated ({LEGACY_API_REMOVAL_MILESTONE}); use make_dt_source with explicit metadata.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     nx, ny, nz = mesh.nx, mesh.ny, mesh.nz
     dx, dy, dz = mesh.dx, mesh.dy, mesh.dz
     vol_cell = dx * dy * dz
