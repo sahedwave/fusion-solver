@@ -145,6 +145,19 @@ def _require_legacy_surface_nonincreasing() -> None:
     if total > baseline:
         raise SystemExit(f"Dynamic G promotion blocked: legacy helper surface increased ({total}>{baseline})")
 
+
+def _require_no_legacy_helper_imports_in_runtime() -> None:
+    offenders: list[str] = []
+    for path in (ROOT / "fusion_project").rglob("*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if "/test_" in rel or rel.endswith("/fusion/source.py") or rel.endswith("/fusion/tbr.py"):
+            continue
+        txt = path.read_text(encoding="utf-8")
+        if "make_dt_source_legacy_group0" in txt or "compute_tbr_components_legacy_g3" in txt:
+            offenders.append(rel)
+    if offenders:
+        raise SystemExit("Dynamic G promotion blocked: legacy helper imports/usages in runtime modules: " + ", ".join(offenders[:10]))
+
 def _run_g_matrix_tests() -> None:
     result = subprocess.run([sys.executable, "-m", "pytest", "-m", "g_matrix", "-q"], cwd=ROOT, check=False)
     if result.returncode != 0:
@@ -163,6 +176,7 @@ def main() -> int:
     _require_collected_evidence(checklist)
     _require_metadata_driven_default_apis()
     _require_legacy_surface_nonincreasing()
+    _require_no_legacy_helper_imports_in_runtime()
     _require_heavy_artifact_freshness(checklist)
     _run_g_matrix_tests()
     print("Dynamic G policy check: promotion evidence satisfied.")
