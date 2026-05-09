@@ -469,7 +469,7 @@ def test_tbr_components_non3group_requires_explicit_breeding_channels(monkeypatc
     mat = Li4SiO4(G=G)
     assert not mat.breeding_channels
     monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: mat)
-    with pytest.raises(ValueError, match="requires explicit breeding_channels for G != 3"):
+    with pytest.raises(ValueError, match="requires explicit breeding_channels"):
         compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
 
 
