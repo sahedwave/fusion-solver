@@ -6,11 +6,11 @@ modules so existing transport APIs remain stable.
 
 ## Data Model
 
-`MaterialXS` requires:
+`MaterialXS` required fields:
 
-- `sigma_t`: shape `(G,)`
-- `sigma_s0`: shape `(G, G)` dense array or SciPy sparse matrix
-- `sigma_s1`: shape `(G, G)` dense array or SciPy sparse matrix
+- `sigma_t[G]`: total cross section vector (shape `(G,)`)
+- `sigma_s0[G,G]`: P0 scattering matrix (shape `(G, G)`, dense array or SciPy sparse matrix)
+- `sigma_s1[G,G]`: P1 scattering matrix (shape `(G, G)`, dense array or SciPy sparse matrix)
 
 The public `sigma_s0` and `sigma_s1` attributes remain dense NumPy arrays for
 legacy API compatibility.  Each material also exposes `sigma_s0_sparse` and
@@ -19,7 +19,7 @@ outgoing group columns from these sparse matrices, so sparse libraries touch
 only nonzero group-coupling entries and do not require constructing a full
 `(nx, ny, nz, n_dir, G)` scattering source.
 
-Optional data:
+`MaterialXS` optional fields:
 
 - `reactions`: dictionary of reaction-name to `(G,)` array
 - `heating`: shape `(G,)`
@@ -43,6 +43,16 @@ valid normalized fission spectrum is physically meaningful for that material.
 
 - `energy_bounds`: shape `(G + 1,)`, strictly monotonic
 - `materials`: dictionary of material key to `MaterialXS`
+
+### Schema version policy
+
+- Current key: `metadata.schema_version`
+- Current format: `fusion_multigroup_vN` (for example, `fusion_multigroup_v1`)
+- Compatibility guarantee: loaders accept libraries that omit
+  `metadata.schema_version` (legacy payloads).
+- Migration expectation: when the schema evolves, preserve backward-compatible
+  loading for older files where feasible and update migration notes/tests before
+  requiring newer version strings.
 
 ## File Formats
 
@@ -72,6 +82,30 @@ standard environments, install the project requirements:
 ```bash
 pip install -r requirements.txt
 ```
+
+### Constrained processed-XS importer (schema integration only)
+
+`sn_multigroup.import_processed_fusion_xs_json(path)` loads a narrow JSON
+schema intended for processed multigroup payload integration:
+
+- required: `energy_bounds`, `materials`
+- per material required: `name`, `sigma_t`, `sigma_s0`, `sigma_s1`
+- per material optional: `reactions`, `heating`, `chi`, `nu_sigma_f`, `metadata`
+
+Validation remains strict through `MaterialXS`/`MultigroupLibrary` checks
+(shape, monotonic bounds, finite/nonnegative XS, normalized `chi` when
+provided). `processed_external_format=true` is assigned only when top-level
+metadata includes:
+
+- non-empty `metadata.provenance`
+- `metadata.units` with non-empty `energy_bounds`, `cross_sections`, and `heating`
+
+If these required metadata keys are missing/empty, import still proceeds for
+backward compatibility, but a warning is emitted and
+`processed_external_format=false` is set.
+
+This importer is **schema wiring only**. It does **not** imply FENDL/NJOY/OpenMC
+benchmark validation by itself.
 
 The HDF5 schema is:
 
@@ -133,6 +167,25 @@ Current generated sizes:
 
 They are synthetic, downscatter-dominant, and meant for software validation,
 not nuclear design.
+
+## Multigroup roadmap status
+
+| Area | Status | Evidence | Remaining work |
+|---|---|---|---|
+| Dynamic G | **partial** | `sn_multigroup.py` data model + `make_synthetic_library`/`make_sparse_synthetic_library`; multigroup tests in `test_multigroup_library.py` and `test_multigroup_heavy.py`. | **Blockers before `complete`:**<br>- Hidden fixed-group assumptions still exist as legacy compatibility fallback in some fusion post-processing paths (explicitly tagged, but not fully eliminated).<br>- Deterministic `G={1,3,10,27,70,175}` coverage exists for solve/source/IO, but post-processing parity is not yet fully demonstrated across the same set.<br>- Legacy compatibility fallbacks are documented as fallback-only and non-physics-validated for arbitrary group structure; production claims still require explicit channels/metadata and external validation evidence. |
+| XS schema | **partial** | `MaterialXS` + `MultigroupLibrary` validation in `sn_multigroup.py`; schema tests in `test_multigroup_library.py`. | Add formally versioned schema docs and migration tooling for future fields; tighten external-import contract evolution. |
+| JSON/NPZ/HDF5 loaders | **partial** | `save_multigroup_library`/`load_multigroup_library` and HDF5 helpers in `sn_multigroup.py`; round-trip tests (`json/npz/h5`) in `test_multigroup_library.py`. | Add broader compatibility tests against archived historical files and stricter schema-version gating. |
+| Group metadata | **partial** | `group_names`, `lethargy_widths`, `source_group_mapping` in `MultigroupLibrary`; metadata tests in `test_multigroup_library.py`. | Expand metadata conventions and controlled vocab for downstream tooling; add compatibility policy docs. Metadata is compatibility/configuration context and must not be interpreted as external physics validation by itself. |
+| Sparse scattering | **partial** | Sparse CSC support in `MaterialXS`; sweep-time directional/group scattering in `sn_operators.py`; guardrail tests in `test_sparse_scattering.py`. | Backend kernel work remains future (ROADMAP Phase 4 note); optimize large-scale runtime beyond Python loops. |
+| Arbitrary source spectra | **partial** | `make_spectrum_source`, `dt_source_spectrum`, named-source helper in `sn_multigroup.py`; source tests in `test_multigroup_library.py`. | Add validated external source libraries/workflows; integrate richer source provenance and uncertainty metadata. |
+| 10/27/70/175 group tests | **partial** | `test_multigroup_heavy.py` fast/heavy tiers and `multigroup_benchmarks.py` report harness. | Keep heavy tier opt-in; extend coverage for larger meshes and stricter scalability gates after backend acceleration. |
+| Performance pass | **not started** (production-scale) | Current docs explicitly list Python sweep and memory bottlenecks in `PERFORMANCE.md`; benchmark artifacts are regression sentinels only. | Implement Phase 3+ roadmap items: group/angle blocking, compiled kernels, reduced storage, MPI/GPU pathways. |
+| Real physics-library integration | **partial** (schema only) | `import_processed_fusion_xs_json` importer in `sn_multigroup.py`; importer section above; mock `example_real_schema.json`. | Integrate real processed libraries with audited provenance and unit consistency checks; no placeholder physics accepted. Compatibility fallbacks and synthetic fixtures remain non-production/non-validated unless external benchmark evidence is added. |
+| Production validation | **not started** (external benchmark level) | `VALIDATION.md` Tier A/B vs Tier C distinction; current golden/multigroup suites are software regression + manufactured checks. | Add independent benchmark/experimental datasets, acceptance tolerances, and review workflow for Tier C external validation. |
+
+**Important:** current multigroup CI/golden suites are software-regression and
+manufactured-check infrastructure. They are not external benchmark validation
+or licensing-grade neutronics qualification.
 
 ## Memory Scaling Warning
 
@@ -245,6 +298,19 @@ and are validated by `fusion_project/test_golden_benchmarks.py`.  These cases
 are deterministic fixed-source problems or analytic manufactured references for
 routine drift detection; they are not a substitute for licensed benchmark or
 experimental validation data.
+
+### Validation taxonomy (what these tests mean)
+
+1. **Synthetic software regression (golden CI drift checks)**  
+   Deterministic fixed-source snapshots used to detect numerical/software
+   drift in this repository.
+2. **Manufactured / analytic checks**  
+   Problems with known analytic behavior (for example slab attenuation trends)
+   used to verify discretization/implementation consistency.
+3. **External physics validation (future, separate suite)**  
+   Independent benchmark or experimental comparisons. Not included in the
+   current golden artifacts and must be tracked with separate datasets,
+   tolerances, and test markers.
 
 Covered fast CI categories:
 

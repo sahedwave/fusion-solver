@@ -22,9 +22,11 @@ from sn_multigroup import (
     MaterialXS,
     MultigroupLibrary,
     estimate_memory_bytes,
+    import_processed_fusion_xs_json,
     load_multigroup_library,
     make_synthetic_library,
     save_multigroup_library,
+    source_spectrum_for_named_source,
 )
 from sn_operators import _scattering_source, _scattering_source_direction_group, _step_cell, _step_cell_python
 from sn_solver import SolverConfig, solve_gmres_dsa
@@ -112,6 +114,70 @@ def test_fission_schema_validation() -> None:
             raise AssertionError(f"{label} was not rejected")
 
 
+@pytest.mark.parametrize(
+    ("case_name", "field", "bad_value", "match"),
+    [
+        ("reject_nonfinite_sigma_t", "sigma_t", np.array([1.0, np.nan, 1.2]), "sigma_t contains non-finite"),
+        ("reject_nonfinite_sigma_s0", "sigma_s0", np.array([[0.2, 0.0, 0.0], [0.0, np.nan, 0.0], [0.0, 0.0, 0.4]]), "sigma_s0 contains non-finite"),
+        ("reject_nonfinite_sigma_s1", "sigma_s1", np.array([[0.0, 0.0, 0.0], [0.0, np.inf, 0.0], [0.0, 0.0, 0.0]]), "sigma_s1 contains non-finite"),
+        ("reject_nonfinite_chi", "chi", np.array([0.6, np.nan, 0.4]), "chi must be finite and nonnegative"),
+        ("reject_nonfinite_nu_sigma_f", "nu_sigma_f", np.array([0.01, np.inf, 0.02]), "nu_sigma_f must be finite and nonnegative"),
+    ],
+)
+def test_materialxs_rejects_nonfinite_arrays(case_name: str, field: str, bad_value: np.ndarray, match: str) -> None:
+    base = _make_fission_material()
+    kwargs = {
+        "name": f"{case_name}_material",
+        "sigma_t": base.sigma_t,
+        "sigma_s0": base.sigma_s0,
+        "sigma_s1": base.sigma_s1,
+        "chi": base.chi,
+        "nu_sigma_f": base.nu_sigma_f,
+    }
+    kwargs[field] = bad_value
+    with pytest.raises(ValueError, match=match):
+        MaterialXS(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "field", "bad_value", "match"),
+    [
+        ("reject_shape_sigma_t", "sigma_t", np.ones((3, 1), dtype=np.float64), "sigma_t must have shape"),
+        ("reject_shape_sigma_s0", "sigma_s0", np.ones((3, 2), dtype=np.float64), "sigma_s0 must have shape"),
+        ("reject_shape_sigma_s1", "sigma_s1", np.ones((2, 3), dtype=np.float64), "sigma_s1 must have shape"),
+        ("reject_shape_chi", "chi", np.ones((2,), dtype=np.float64), "chi must have shape"),
+        ("reject_shape_nu_sigma_f", "nu_sigma_f", np.ones((2,), dtype=np.float64), "nu_sigma_f must have shape"),
+    ],
+)
+def test_materialxs_rejects_shape_mismatch_arrays(case_name: str, field: str, bad_value: np.ndarray, match: str) -> None:
+    base = _make_fission_material()
+    kwargs = {
+        "name": f"{case_name}_material",
+        "sigma_t": base.sigma_t,
+        "sigma_s0": base.sigma_s0,
+        "sigma_s1": base.sigma_s1,
+        "chi": base.chi,
+        "nu_sigma_f": base.nu_sigma_f,
+    }
+    kwargs[field] = bad_value
+    with pytest.raises(ValueError, match=match):
+        MaterialXS(**kwargs)
+
+
+def test_materialxs_rejects_invalid_chi_normalization() -> None:
+    base = _make_fission_material()
+    bad_chi = np.array([0.4, 0.4, 0.4], dtype=np.float64)
+    with pytest.raises(ValueError, match="chi must be normalized"):
+        MaterialXS(
+            name="bad_chi_norm_material",
+            sigma_t=base.sigma_t,
+            sigma_s0=base.sigma_s0,
+            sigma_s1=base.sigma_s1,
+            chi=bad_chi,
+            nu_sigma_f=base.nu_sigma_f,
+        )
+
+
 def test_fission_json_npz_roundtrip() -> None:
     mat = _make_fission_material()
     lib = MultigroupLibrary(
@@ -172,6 +238,30 @@ def test_old_schema_without_fission_fields_loads() -> None:
         loaded_npz = load_multigroup_library(npz_path)
         _check("legacy npz chi omitted", loaded_npz.materials["legacy"].chi is None)
         _check("legacy npz nu_sigma_f omitted", loaded_npz.materials["legacy"].nu_sigma_f is None)
+        _check("legacy npz schema version omitted accepted", "schema_version" not in loaded_npz.metadata)
+
+
+def test_schema_version_metadata_validation() -> None:
+    base = make_synthetic_library(3)
+    ok = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials=base.materials,
+        metadata={"schema_version": "fusion_multigroup_v1"},
+    )
+    _check("schema version accepted", ok.metadata["schema_version"] == "fusion_multigroup_v1")
+
+    with pytest.raises(ValueError, match="metadata.schema_version must be a string"):
+        MultigroupLibrary(
+            energy_bounds=base.energy_bounds,
+            materials=base.materials,
+            metadata={"schema_version": 1},
+        )
+    with pytest.raises(ValueError, match="fusion_multigroup_vN"):
+        MultigroupLibrary(
+            energy_bounds=base.energy_bounds,
+            materials=base.materials,
+            metadata={"schema_version": "v1"},
+        )
 
 
 def _assert_material_equal(name: str, got: MaterialXS, expected: MaterialXS) -> None:
@@ -201,6 +291,9 @@ def _assert_material_equal(name: str, got: MaterialXS, expected: MaterialXS) -> 
 
 def _assert_library_equal(got: MultigroupLibrary, expected: MultigroupLibrary) -> None:
     _check("library energy_bounds", bool(np.allclose(got.energy_bounds, expected.energy_bounds)))
+    _check("library group_names", got.group_names == expected.group_names)
+    _check("library lethargy_widths", bool(np.allclose(got.lethargy_widths, expected.lethargy_widths)))
+    _check("library source_group_mapping", got.source_group_mapping == expected.source_group_mapping)
     _check("library metadata", got.metadata == expected.metadata)
     _check("library material keys", list(got.materials) == list(expected.materials))
     for key, expected_mat in expected.materials.items():
@@ -230,6 +323,43 @@ def test_hdf5_roundtrip_fission_fields_and_hdf5_suffix() -> None:
         _assert_library_equal(load_multigroup_library(path), lib)
 
 
+def test_optional_group_metadata_validation_and_computed_lethargy() -> None:
+    lib = make_synthetic_library(4)
+    bounds = lib.energy_bounds
+    expected = np.abs(np.log(bounds[:-1] / bounds[1:]))
+    _check("computed lethargy from bounds", bool(np.allclose(lib.lethargy_widths, expected)))
+
+    with pytest.raises(ValueError, match="group_names must have length"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, group_names=("g0",))
+    with pytest.raises(ValueError, match="lethargy_widths must have shape"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, lethargy_widths=np.ones((3, 1)))
+    with pytest.raises(ValueError, match="out of range"):
+        MultigroupLibrary(energy_bounds=bounds, materials=lib.materials, source_group_mapping={"dt": 7})
+
+
+def test_group_metadata_roundtrip_json_npz_hdf5() -> None:
+    pytest.importorskip("h5py")
+    base = make_synthetic_library(5)
+    mat_name = next(iter(base.materials))
+    group_names = tuple(f"group_{g}" for g in range(base.G))
+    lethargy = np.linspace(0.1, 0.5, base.G)
+    source_map = {"dt": 0, "alpha_n": {"group": 3, "tag": "fusion"}}
+    lib = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials={mat_name: base.materials[mat_name]},
+        group_names=group_names,
+        lethargy_widths=lethargy,
+        source_group_mapping=source_map,
+        metadata={"schema": "with_group_metadata"},
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        for suffix in ("json", "npz", "h5"):
+            path = Path(tmp) / f"metadata_roundtrip.{suffix}"
+            save_multigroup_library(lib, path)
+            loaded = load_multigroup_library(path)
+            _assert_library_equal(loaded, lib)
+
+
 def test_hdf5_missing_dependency_error(monkeypatch: pytest.MonkeyPatch) -> None:
     find_spec = sn_multigroup.importlib.util.find_spec
 
@@ -254,6 +384,80 @@ def test_real_schema_example() -> None:
     _check("real schema converts", lib.materials["mock_steel"].to_p1_material().G == 2)
 
 
+def test_processed_importer_success_and_provenance_flag() -> None:
+    path = Path(__file__).resolve().parent / "data" / "multigroup" / "example_real_schema.json"
+    lib = import_processed_fusion_xs_json(path)
+    _check("processed import G", lib.G == 2)
+    _check("processed import material present", "mock_steel" in lib.materials)
+    _check("processed format flag true with provenance", lib.metadata.get("processed_external_format") is True)
+
+
+def test_processed_importer_shape_mismatch_rejected(tmp_path: Path) -> None:
+    bad = {
+        "energy_bounds": [3.0, 2.0, 1.0],
+        "metadata": {
+            "provenance": "unit-test",
+            "units": {
+                "energy_bounds": "eV",
+                "cross_sections": "cm^-1",
+                "heating": "MeV per reaction",
+            },
+        },
+        "materials": {
+            "m": {
+                "name": "m",
+                "sigma_t": [1.0, 1.1],
+                "sigma_s0": [[0.2, 0.0], [0.0, 0.3]],
+                "sigma_s1": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            }
+        },
+    }
+    p = tmp_path / "bad_processed.json"
+    p.write_text(json.dumps(bad), encoding="utf-8")
+    with pytest.raises(ValueError, match="must have shape"):
+        import_processed_fusion_xs_json(p)
+
+
+def test_processed_importer_missing_provenance_warns(tmp_path: Path) -> None:
+    payload = {
+        "energy_bounds": [3.0, 2.0, 1.0],
+        "metadata": {"description": "no provenance"},
+        "materials": {
+            "m": {
+                "name": "m",
+                "sigma_t": [1.0, 1.1],
+                "sigma_s0": [[0.2, 0.0], [0.0, 0.3]],
+                "sigma_s1": [[0.0, 0.0], [0.0, 0.0]],
+            }
+        },
+    }
+    p = tmp_path / "no_provenance.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.warns(UserWarning, match="missing required metadata"):
+        lib = import_processed_fusion_xs_json(p)
+    _check("processed format flag false without provenance", lib.metadata.get("processed_external_format") is False)
+
+
+def test_processed_importer_provenance_present_units_missing_warns(tmp_path: Path) -> None:
+    payload = {
+        "energy_bounds": [3.0, 2.0, 1.0],
+        "metadata": {"provenance": "unit-test"},
+        "materials": {
+            "m": {
+                "name": "m",
+                "sigma_t": [1.0, 1.1],
+                "sigma_s0": [[0.2, 0.0], [0.0, 0.3]],
+                "sigma_s1": [[0.0, 0.0], [0.0, 0.0]],
+            }
+        },
+    }
+    p = tmp_path / "missing_units.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.warns(UserWarning, match="missing required metadata"):
+        lib = import_processed_fusion_xs_json(p)
+    _check("processed format flag false without units", lib.metadata.get("processed_external_format") is False)
+
+
 def test_sources() -> None:
     mesh = Mesh(4, 4, 4, 1.0, 1.0, 1.0)
     spectrum = np.arange(1, 11, dtype=np.float64)
@@ -269,6 +473,90 @@ def test_sources() -> None:
     lo = min(bounds_desc[idx], bounds_desc[idx + 1])
     hi = max(bounds_desc[idx], bounds_desc[idx + 1])
     _check("D-T group contains 14.1 MeV", lo <= 14.1e6 <= hi)
+
+
+def test_dt_source_spectrum_descending_and_ascending_bounds() -> None:
+    bounds_desc = np.array([20.0e6, 14.05e6, 1.0e6], dtype=np.float64)
+    desc = dt_source_spectrum(bounds_desc)
+    _check("descending dt source picks first bin", bool(np.allclose(desc, [1.0, 0.0])))
+
+    bounds_asc = bounds_desc[::-1]
+    asc = dt_source_spectrum(bounds_asc)
+    _check("ascending dt source picks last bin", bool(np.allclose(asc, [0.0, 1.0])))
+
+
+def test_source_spectrum_for_named_source_mapping_and_fallback() -> None:
+    base = make_synthetic_library(4)
+    mapped = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials=base.materials,
+        source_group_mapping={"DT_14MeV": {"group": 2, "label": "user_override"}},
+    )
+    mapped_spec = source_spectrum_for_named_source(mapped, "DT_14MeV")
+    _check("explicit dt mapping honored", bool(np.allclose(mapped_spec, [0.0, 0.0, 1.0, 0.0])))
+
+    fallback_spec = source_spectrum_for_named_source(base, "DT_14MeV")
+    expected = dt_source_spectrum(base.energy_bounds)
+    _check("dt fallback matches energy scan", bool(np.allclose(fallback_spec, expected)))
+
+
+def test_dt_source_out_of_range_raises_cleanly() -> None:
+    bounds = np.array([1.0e6, 5.0e5, 1.0e5], dtype=np.float64)
+    with pytest.raises(ValueError, match="outside the energy group bounds"):
+        dt_source_spectrum(bounds, neutron_energy_ev=14.1e6)
+
+
+def test_named_source_spectrum_conserves_strength_through_make_spectrum_source() -> None:
+    lib = make_synthetic_library(6)
+    spectrum = source_spectrum_for_named_source(lib, "DT_14MeV")
+    mesh = Mesh(4, 3, 2, 0.5, 0.75, 1.25)
+    strength = 3.7
+    Q = make_spectrum_source(mesh, spectrum, strength=strength, geometry="gaussian")
+    vol = mesh.dx * mesh.dy * mesh.dz
+    _check("named source spectrum one-hot normalized", float(spectrum.sum()) == 1.0)
+    _check("named source strength conserved", abs(float(np.sum(Q) * vol) - strength) < 1.0e-12)
+
+
+@pytest.mark.parametrize(
+    "G",
+    [
+        1,
+        3,
+        10,
+        27,
+        pytest.param(70, marks=pytest.mark.heavy),
+        pytest.param(175, marks=pytest.mark.heavy),
+    ],
+)
+def test_named_source_and_dt_fallback_matrix_across_group_counts(G: int) -> None:
+    base = make_synthetic_library(G)
+    mapped_group = min(2, G - 1)
+    mapped = MultigroupLibrary(
+        energy_bounds=base.energy_bounds,
+        materials=base.materials,
+        source_group_mapping={"DT_14MeV": {"group": mapped_group, "label": "matrix_override"}},
+    )
+
+    mapped_spec = source_spectrum_for_named_source(mapped, "DT_14MeV")
+    expected_mapped = np.zeros(G, dtype=np.float64)
+    expected_mapped[mapped_group] = 1.0
+    _check(f"{G}-group explicit mapping spectrum", bool(np.allclose(mapped_spec, expected_mapped)))
+
+    fallback_spec = source_spectrum_for_named_source(base, "DT_14MeV")
+    expected_fallback = dt_source_spectrum(base.energy_bounds)
+    _check(f"{G}-group dt fallback spectrum", bool(np.allclose(fallback_spec, expected_fallback)))
+    _check(f"{G}-group dt fallback normalized", float(fallback_spec.sum()) == 1.0)
+
+    mesh = Mesh(2, 2, 1, 1.0, 1.0, 1.0)
+    vol = mesh.dx * mesh.dy * mesh.dz
+    strength = 1.7
+    for label, spectrum in (("mapped", mapped_spec), ("fallback", fallback_spec)):
+        Q = make_spectrum_source(mesh, spectrum, strength=strength, geometry="point")
+        _check(f"{G}-group {label} source finite", bool(np.all(np.isfinite(Q))))
+        _check(
+            f"{G}-group {label} source conservation",
+            abs(float(np.sum(Q) * vol) - strength) < 1.0e-12,
+        )
 
 
 def test_spectrum_source_conservation_structured_unstructured() -> None:
@@ -317,9 +605,40 @@ def _solver_smoke(G: int) -> None:
     _check(f"{G}-group smoke nonzero", float(result.phi.sum()) > 0.0)
 
 
-def test_solver_smoke() -> None:
-    _solver_smoke(10)
-    _solver_smoke(27)
+@pytest.mark.parametrize("G", [1, 3, 10, 27])
+def test_solver_smoke_fast_group_set(G: int) -> None:
+    _solver_smoke(G)
+
+
+@pytest.mark.heavy
+@pytest.mark.parametrize("G", [70, 175])
+def test_solver_smoke_heavy_group_set(G: int) -> None:
+    _solver_smoke(G)
+
+
+def _io_roundtrip_smoke(G: int, suffix: str) -> None:
+    lib = make_synthetic_library(G)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / f"io_smoke_{G}g.{suffix}"
+        save_multigroup_library(lib, path)
+        loaded = load_multigroup_library(path)
+    _check(f"{G}-group {suffix} roundtrip G", loaded.G == G)
+    mat_key = next(iter(lib.materials))
+    _check(
+        f"{G}-group {suffix} roundtrip sigma_t",
+        bool(np.allclose(loaded.materials[mat_key].sigma_t, lib.materials[mat_key].sigma_t)),
+    )
+
+
+@pytest.mark.parametrize("G", [1, 3, 10, 27])
+def test_io_roundtrip_smoke_fast_group_set(G: int) -> None:
+    _io_roundtrip_smoke(G, "npz")
+
+
+@pytest.mark.heavy
+@pytest.mark.parametrize("G", [70, 175])
+def test_io_roundtrip_smoke_heavy_group_set(G: int) -> None:
+    _io_roundtrip_smoke(G, "npz")
 
 
 def test_positivity_diagnostics() -> None:

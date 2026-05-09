@@ -25,7 +25,9 @@ processed with NJOY2021 for an ITER-like neutron spectrum
 
 For G != 3: _uniform_fill applies a 1/(1+g) spectral weight decay
 from the fast-group value so the module works with any energy group
-structure used by the solver.
+structure used by the solver. This is an explicit compatibility fallback
+for software integration/testing; it is not a processed multigroup library
+and is not external-physics-validated for arbitrary group structures.
 
 All arrays must have length G.  FusionMaterial.__post_init__ enforces
 this at construction time.
@@ -33,7 +35,7 @@ this at construction time.
 
 from __future__ import annotations
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -77,6 +79,8 @@ class FusionMaterial:
     energy_deposition: np.ndarray
     is_breeder:        bool  = False
     density:           float = 1.0
+    breeding_channels: dict[str, np.ndarray] | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self):
         for attr in ("sigma_t", "sigma_a", "sigma_dpa", "energy_deposition"):
@@ -93,6 +97,17 @@ class FusionMaterial:
                     f"{self.name}.{attr}: contains negative values — "
                     "cross-sections must be non-negative."
                 )
+        if self.breeding_channels is not None:
+            channels = {}
+            for key, values in dict(self.breeding_channels).items():
+                arr = np.asarray(values, dtype=np.float64)
+                if arr.shape != (self.G,):
+                    raise ValueError(f"{self.name}.breeding_channels[{key!r}] expected shape {(self.G,)}, got {arr.shape}")
+                if np.any(arr < 0.0):
+                    raise ValueError(f"{self.name}.breeding_channels[{key!r}] contains negative values")
+                channels[str(key)] = arr
+            self.breeding_channels = channels
+        self.metadata = dict(self.metadata)
 
 
 # ================================================================
@@ -167,6 +182,15 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
     li6_enrichment : float
         Atomic fraction of Li-6 (0.076 = natural, up to ~0.90 for
         enriched designs such as ITER/DEMO blanket modules).
+
+    Notes
+    -----
+    - The built-in Li-6/Li-7 channel split is physics-annotated only for the
+      legacy 3-group reference path.
+    - For G != 3, returned values come from `_uniform_fill` compatibility
+      fallback metadata and are not external-physics-validated.
+    - Production claims for arbitrary group structures require explicit
+      processed libraries and explicit channel metadata.
     """
     nat_li6  = 0.076
     scale_li6 = li6_enrichment / nat_li6
@@ -188,6 +212,10 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
             sigma_dpa         = np.array([0.002, 0.001, 0.0003]),
             # Li-6(n,alpha)T Q-value = 4.78 MeV; fast Q-value lower
             energy_deposition = np.array([4.80,  1.50,  4.78]),
+            breeding_channels = {
+                "li6_breeding": sigma_a_scaled * np.array([0.0, 1.0, 1.0]),
+                "li7_breeding": sigma_a_scaled * np.array([1.0, 0.0, 0.0]),
+            },
         )
     return _uniform_fill(f"Li4SiO4 ({li6_enrichment*100:.1f}%)", G, 2.39, True,
                          sigma_t0=0.148, sigma_a0=0.010,
@@ -262,6 +290,11 @@ def Helium(G: int = 3) -> FusionMaterial:
         sigma_a           = np.zeros(G),
         sigma_dpa         = np.zeros(G),
         energy_deposition = np.zeros(G),
+        metadata          = {
+            "synthetic_fallback": True,
+            "validation_status": "not_fendl_njoy_openmc_validated",
+            "notes": "G!=3 compatibility fallback using 1/(1+g) decay surrogate",
+        },
     )
 
 
@@ -309,10 +342,12 @@ def _uniform_fill(
     sigma_t0: float, sigma_a0: float, sigma_dpa0: float, edep0: float,
 ) -> FusionMaterial:
     """
-    Fallback for G != 3: fill G groups using a 1/(1+g) spectral decay
-    from the fast-group (g=0) values.  This ensures the module is
-    compatible with any energy group structure used by the solver,
-    while preserving the correct ordering (fast > epi > thermal).
+    Synthetic compatibility fallback for G != 3.
+
+    IMPORTANT: this 1/(1+g) decay profile is not a processed multigroup
+    library and is not FENDL/NJOY/OpenMC validated. It is intended only
+    for software compatibility/testing when a true multigroup library is
+    unavailable.
     """
     decay = np.array([1.0 / (1.0 + g) for g in range(G)])
     return FusionMaterial(
@@ -324,4 +359,9 @@ def _uniform_fill(
         sigma_a           = sigma_a0   * decay,
         sigma_dpa         = sigma_dpa0 * decay,
         energy_deposition = edep0      * decay,
+        metadata          = {
+            "synthetic_fallback": True,
+            "validation_status": "not_fendl_njoy_openmc_validated",
+            "notes": "G!=3 compatibility fallback using 1/(1+g) decay",
+        },
     )

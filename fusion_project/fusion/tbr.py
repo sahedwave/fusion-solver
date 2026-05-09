@@ -159,13 +159,19 @@ def compute_tbr_components(
 
     Notes
     -----
-    For G=3:
+    Legacy fallback (G=3 only):
         Li-6 reactions dominate groups 1 (epi) and 2 (thermal).
         Li-7 reactions dominate group 0 (fast) via threshold reaction.
         The split is encoded via the enrichment scaling in Li4SiO4():
           sigma_a[fast]  scales with Li-7 fraction → assigned to tbr_li7
           sigma_a[epi]   scales with Li-6 fraction → assigned to tbr_li6
           sigma_a[therm] scales with Li-6 fraction → assigned to tbr_li6
+
+    For G != 3, explicit ``breeding_channels`` must be provided on the breeder
+    material (``li6_breeding`` and ``li7_breeding`` vectors of shape ``(G,)``).
+    No implicit group-index split is used outside the legacy 3-group fallback.
+    This preserves compatibility for historical 3-group workflows but is not an
+    external-physics validation claim for arbitrary group structures.
     """
     from fusion.materials import Li4SiO4
     import copy, dataclasses
@@ -178,7 +184,17 @@ def compute_tbr_components(
     G = phi.shape[-1]
     nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
 
-    if G == 3:
+    channels = nat_mat.breeding_channels or {}
+    if "li6_breeding" in channels or "li7_breeding" in channels:
+        if "li6_breeding" not in channels or "li7_breeding" not in channels:
+            raise ValueError("breeding_channels must provide both 'li6_breeding' and 'li7_breeding'")
+        sigma_a_li6 = np.asarray(channels["li6_breeding"], dtype=np.float64)
+        sigma_a_li7 = np.asarray(channels["li7_breeding"], dtype=np.float64)
+        if sigma_a_li6.shape != (G,) or sigma_a_li7.shape != (G,):
+            raise ValueError(f"breeding channel vectors must have shape {(G,)}")
+    elif G == 3:
+        # Legacy compatibility fallback path for historical 3-group behavior.
+        # Not a general validated rule for arbitrary group structures.
         # Li-6 component: keep epi (g=1) and thermal (g=2), zero fast (g=0)
         sigma_a_li6 = nat_mat.sigma_a.copy()
         sigma_a_li6[0] = 0.0
@@ -187,11 +203,11 @@ def compute_tbr_components(
         sigma_a_li7 = np.zeros(G)
         sigma_a_li7[0] = nat_mat.sigma_a[0]
     else:
-        # General G: Li-7 lives in group 0 (fast), Li-6 in all others
-        sigma_a_li6 = nat_mat.sigma_a.copy()
-        sigma_a_li6[0] = 0.0
-        sigma_a_li7 = np.zeros(G)
-        sigma_a_li7[0] = nat_mat.sigma_a[0]
+        raise ValueError(
+            "compute_tbr_components requires explicit breeding_channels for G != 3 "
+            "(expected 'li6_breeding' and 'li7_breeding'). "
+            "Legacy group-index fallback is compatibility-only for G=3."
+        )
 
     # Build synthetic single-reaction materials by replacing sigma_a
     # dataclasses.replace keeps all other fields identical
