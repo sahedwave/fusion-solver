@@ -125,7 +125,7 @@ class FusionMaterial:
 # Values are representative for scoping / benchmarking.
 # ================================================================
 
-def SS316(G: int = 3) -> FusionMaterial:
+def SS316_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     316L Stainless Steel — first wall / structural material.
 
@@ -159,7 +159,7 @@ def SS316(G: int = 3) -> FusionMaterial:
                          sigma_dpa0=0.045, edep0=6.50)
 
 
-def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
+def Li4SiO4_legacy_compat(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
     """
     Li4SiO4 — lithium orthosilicate tritium breeder blanket.
 
@@ -216,7 +216,7 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
                          sigma_dpa0=0.002, edep0=4.78)
 
 
-def Beryllium(G: int = 3) -> FusionMaterial:
+def Beryllium_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     Beryllium — neutron multiplier / reflector.
 
@@ -292,7 +292,7 @@ def Helium(G: int = 3) -> FusionMaterial:
     )
 
 
-def Tungsten(G: int = 3) -> FusionMaterial:
+def Tungsten_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     Tungsten (W) — first-wall / divertor armour material.
 
@@ -359,3 +359,30 @@ def _uniform_fill(
             "notes": "G!=3 compatibility fallback using 1/(1+g) decay",
         },
     )
+
+
+def SS316(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
+    if strict_dynamic_g and G != 3 and sigma_a is None:
+        raise ValueError("SS316 strict_dynamic_g requires explicit group-wise vectors for G!=3")
+    return SS316_legacy_compat(G=G)
+
+
+def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076, *, strict_dynamic_g: bool = False, breeding_channels: dict[str, np.ndarray] | None = None) -> FusionMaterial:
+    if strict_dynamic_g and G != 3 and breeding_channels is None:
+        raise ValueError("Li4SiO4 strict_dynamic_g requires explicit breeding_channels for G!=3")
+    mat = Li4SiO4_legacy_compat(G=G, li6_enrichment=li6_enrichment)
+    if breeding_channels is not None:
+        mat.breeding_channels = {k: np.asarray(v, dtype=np.float64) for k, v in breeding_channels.items()}
+    return mat
+
+
+def Beryllium(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
+    if strict_dynamic_g and G != 3 and sigma_a is None:
+        raise ValueError("Beryllium strict_dynamic_g requires explicit group-wise vectors for G!=3")
+    return Beryllium_legacy_compat(G=G)
+
+
+def Tungsten(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
+    if strict_dynamic_g and G != 3 and sigma_a is None:
+        raise ValueError("Tungsten strict_dynamic_g requires explicit group-wise vectors for G!=3")
+    return Tungsten_legacy_compat(G=G)

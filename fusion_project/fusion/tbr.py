@@ -128,7 +128,6 @@ def compute_tbr_components(
     mesh,
     source_strength_val: float,
     li_region_mask:      np.ndarray | None = None,
-    legacy_group_semantics: bool = False,
     strict_dynamic_g: bool = False,
 ) -> dict:
     """
@@ -221,9 +220,7 @@ def compute_tbr_components(
         raise ValueError(
             "compute_tbr_components requires explicit breeding_channels metadata "
             "('li6_breeding' and 'li7_breeding') for production claims and all "
-            "non-legacy paths. Set legacy_group_semantics=True only for "
-            "compatibility-only legacy mode (G==3), which is not external-physics "
-            "validated for arbitrary G."
+            "non-legacy paths for all G."
         )
 
     # Build synthetic single-reaction materials by replacing sigma_a
@@ -258,32 +255,6 @@ def compute_tbr_components(
     }
 
 
-
-def compute_tbr_components_legacy_g3(
-    phi: np.ndarray,
-    li6_enrichment: float,
-    mesh,
-    source_strength_val: float,
-    li_region_mask: np.ndarray | None = None,
-) -> dict:
-    """Compatibility-only legacy 3-group Li6/Li7 split."""
-    warnings.warn(
-        f"compute_tbr_components_legacy_g3 is deprecated ({LEGACY_API_REMOVAL_MILESTONE}); provide explicit breeding_channels in compute_tbr_components.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    G = phi.shape[-1]
-    if G != 3:
-        raise ValueError("compute_tbr_components_legacy_g3 requires G==3")
-    return compute_tbr_components(
-        phi,
-        li6_enrichment=li6_enrichment,
-        mesh=mesh,
-        source_strength_val=source_strength_val,
-        li_region_mask=li_region_mask,
-        legacy_group_semantics=True,
-        strict_dynamic_g=False,
-    )
 
 def tbr_sensitivity_enrichment(
     phi:                 np.ndarray,
