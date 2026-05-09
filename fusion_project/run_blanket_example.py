@@ -96,7 +96,9 @@ def run() -> FusionResults:
     print(f"  Groups:   G = {G}  (fast | epi | thermal)")
 
     # ── 2. Build D-T source ──────────────────────────────────────
-    Q_ext = make_dt_source(mesh, G=G, geometry="point", strength=STRENGTH)
+    src_map = np.zeros(G, dtype=np.float64)
+    src_map[0] = 1.0
+    Q_ext = make_dt_source(mesh, G=G, geometry="point", strength=STRENGTH, source_group_mapping=src_map)
     S_DT  = source_strength(Q_ext, mesh)
     print(f"  S_DT verified: {S_DT:.6e} n/s  (relative error = "
           f"{abs(S_DT - STRENGTH)/STRENGTH:.2e})")
