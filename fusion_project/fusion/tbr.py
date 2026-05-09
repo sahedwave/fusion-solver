@@ -126,6 +126,7 @@ def compute_tbr_components(
     source_strength_val: float,
     li_region_mask:      np.ndarray | None = None,
     legacy_group_semantics: bool = False,
+    strict_dynamic_g: bool = False,
 ) -> dict:
     """
     Compute TBR split explicitly into Li-6 and Li-7 contributions.
@@ -197,6 +198,8 @@ def compute_tbr_components(
     nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
 
     channels = nat_mat.breeding_channels or {}
+    if strict_dynamic_g and legacy_group_semantics:
+        raise ValueError("strict_dynamic_g=True forbids legacy_group_semantics fallback; provide explicit breeding_channels.")
     if "li6_breeding" in channels or "li7_breeding" in channels:
         if "li6_breeding" not in channels or "li7_breeding" not in channels:
             raise ValueError("breeding_channels must provide both 'li6_breeding' and 'li7_breeding'")

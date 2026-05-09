@@ -49,6 +49,7 @@ def make_dt_source(
     plasma_fraction:    float = 0.25,
     gaussian_sigma_cm:  float | None = None,
     energy_bounds:      np.ndarray | None = None,
+    strict_dynamic_g:   bool = False,
 ) -> np.ndarray:
     """
     Build the D-T external source array Q_ext[i,j,k,g].
@@ -85,6 +86,12 @@ def make_dt_source(
     ------
     ValueError : bad geometry string, G < 1, or strength <= 0.
     """
+    if strict_dynamic_g and energy_bounds is None:
+        raise ValueError(
+            "strict_dynamic_g=True requires explicit energy_bounds or metadata-driven "
+            "source-group mapping; implicit group-0 source placement is compatibility-only."
+        )
+
     if energy_bounds is not None:
         spectrum = dt_source_spectrum(energy_bounds)
         if spectrum.shape != (G,):

@@ -39,3 +39,13 @@ def test_g_coverage_contract_references_expected_test_ids() -> None:
         assert "test_source_and_io_matrix_parity" in path_map["source"]
         assert "test_source_and_io_matrix_parity" in path_map["io_roundtrip"]
         assert "test_postprocess_tbr_heating_source_normalization_matrix" in path_map["postprocess"]
+
+
+def test_dynamic_g_checklist_exists_and_has_required_fields() -> None:
+    from pathlib import Path
+    import json
+
+    checklist = json.loads((Path(__file__).resolve().parent / "dynamic_g_promotion_checklist.yaml").read_text(encoding="utf-8"))
+    assert checklist["required_groups"] == [1, 3, 10, 27, 70, 175]
+    assert "required_ci_checks" in checklist
+    assert checklist["max_heavy_age_days"] == 7
