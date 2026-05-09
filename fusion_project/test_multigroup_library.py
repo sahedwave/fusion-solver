@@ -40,6 +40,63 @@ def _check(name: str, condition: bool, detail: str = "") -> None:
 
 
 
+
+REQUIRED_G_COVERAGE = (1, 3, 10, 27, 70, 175)
+REQUIRED_PATH_KEYS = ("solve", "source", "io_roundtrip", "postprocess")
+
+# Governance contract: explicit test-id mapping that CI can audit.
+# If a required G/path entry is removed, this test fails immediately.
+G_COVERAGE_CONTRACT: dict[int, dict[str, str]] = {
+    1: {
+        "solve": "test_fast_multigroup_benchmark_regression[g1]",
+        "source": "test_source_and_io_matrix_parity[1]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[1]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[1]",
+    },
+    3: {
+        "solve": "test_fast_multigroup_benchmark_regression[g3]",
+        "source": "test_source_and_io_matrix_parity[3]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[3]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[3]",
+    },
+    10: {
+        "solve": "test_solver_smoke",
+        "source": "test_source_and_io_matrix_parity[10]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[10]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[10]",
+    },
+    27: {
+        "solve": "test_solver_smoke",
+        "source": "test_source_and_io_matrix_parity[27]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[27]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[27]",
+    },
+    70: {
+        "solve": "test_heavy_multigroup_benchmark_regression[g70]",
+        "source": "test_source_and_io_matrix_parity[70]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[70]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[70]",
+    },
+    175: {
+        "solve": "test_heavy_multigroup_benchmark_regression[g175]",
+        "source": "test_source_and_io_matrix_parity[175]",
+        "io_roundtrip": "test_source_and_io_matrix_parity[175]",
+        "postprocess": "test_postprocess_tbr_heating_source_normalization_matrix[175]",
+    },
+}
+
+
+def test_g_coverage_contract_complete() -> None:
+    """Lightweight governance check guarding required G/path coverage mappings."""
+    assert set(G_COVERAGE_CONTRACT) == set(REQUIRED_G_COVERAGE)
+    for g in REQUIRED_G_COVERAGE:
+        path_map = G_COVERAGE_CONTRACT[g]
+        assert set(path_map) == set(REQUIRED_PATH_KEYS)
+        for key in REQUIRED_PATH_KEYS:
+            test_id = path_map[key]
+            assert isinstance(test_id, str)
+            assert test_id.strip() != ""
+
 G_MATRIX_CASES = [
     1,
     3,
