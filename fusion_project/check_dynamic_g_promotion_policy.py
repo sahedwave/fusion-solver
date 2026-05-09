@@ -26,24 +26,47 @@ def _dynamic_g_status(doc_text: str) -> str:
     return m.group(1).lower()
 
 
+def _git_text(*args: str) -> str | None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _baseline_ref() -> str:
+    """
+    Return best-effort baseline commit for policy comparisons.
+
+    CI typically checks PRs against main/master, while local runs may not have a
+    remote tracking branch. We prefer merge-base with origin/{main,master},
+    falling back to HEAD~1 if needed.
+    """
+    for remote_ref in ("origin/main", "origin/master", "main", "master"):
+        base = _git_text("merge-base", "HEAD", remote_ref)
+        if base and base.strip():
+            return base.strip()
+    return "HEAD~1"
+
+
 def _doc_changed_partial_to_complete() -> bool:
     current = _read(MULTIGROUP_DOC)
     current_status = _dynamic_g_status(current)
     if current_status != "complete":
         return False
 
-    base = subprocess.run(
-        ["git", "show", "HEAD~1:fusion_project/MULTIGROUP.md"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if base.returncode != 0:
+    baseline = _baseline_ref()
+    base_doc = _git_text("show", f"{baseline}:fusion_project/MULTIGROUP.md")
+    if base_doc is None:
         # No comparable base (e.g. first commit in branch): enforce evidence if status is complete.
         return True
 
-    prev_status = _dynamic_g_status(base.stdout)
+    prev_status = _dynamic_g_status(base_doc)
     return prev_status == "partial"
 
 
