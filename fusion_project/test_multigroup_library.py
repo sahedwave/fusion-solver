@@ -38,6 +38,7 @@ def _check(name: str, condition: bool, detail: str = "") -> None:
     print(f"[PASS] {name}" + (f" - {detail}" if detail else ""))
 
 
+@pytest.mark.g_matrix
 def test_schema_validation() -> None:
     lib = make_synthetic_library(10)
     mat = next(iter(lib.materials.values()))
