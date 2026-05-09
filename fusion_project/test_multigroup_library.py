@@ -38,6 +38,51 @@ def _check(name: str, condition: bool, detail: str = "") -> None:
     print(f"[PASS] {name}" + (f" - {detail}" if detail else ""))
 
 
+def _required_only_material_kwargs() -> dict[str, np.ndarray | str]:
+    return {
+        "name": "required_only",
+        "sigma_t": np.array([1.0, 1.1, 1.2], dtype=np.float64),
+        "sigma_s0": np.diag([0.2, 0.3, 0.4]).astype(np.float64),
+        "sigma_s1": np.zeros((3, 3), dtype=np.float64),
+    }
+
+
+@pytest.mark.parametrize(
+    ("case_name", "mutator", "should_pass"),
+    [
+        # Goal 2 acceptance: minimal required-only material payload passes.
+        ("required_only_pass", lambda kwargs: kwargs, True),
+        # Goal 2 acceptance: optional fields with valid shapes pass.
+        (
+            "optional_fields_valid_shapes_pass",
+            lambda kwargs: {
+                **kwargs,
+                "reactions": {"capture": np.array([0.01, 0.02, 0.03], dtype=np.float64)},
+                "heating": np.array([1.0, 2.0, 3.0], dtype=np.float64),
+                "chi": np.array([0.6, 0.3, 0.1], dtype=np.float64),
+                "nu_sigma_f": np.array([0.02, 0.01, 0.03], dtype=np.float64),
+                "metadata": {"case": "goal2_optional_valid"},
+            },
+            True,
+        ),
+        # Goal 2 acceptance: non-finite values fail validation.
+        ("invalid_nonfinite_sigma_t_fail", lambda kwargs: {**kwargs, "sigma_t": np.array([1.0, np.nan, 1.2])}, False),
+        # Goal 2 acceptance: shape mismatches fail validation.
+        ("invalid_shape_sigma_s0_fail", lambda kwargs: {**kwargs, "sigma_s0": np.ones((3, 2), dtype=np.float64)}, False),
+        # Goal 2 acceptance: invalid chi normalization fails validation.
+        ("invalid_chi_normalization_fail", lambda kwargs: {**kwargs, "chi": np.array([0.6, 0.3, 0.2], dtype=np.float64)}, False),
+    ],
+)
+def test_goal2_schema_acceptance_matrix(case_name: str, mutator, should_pass: bool) -> None:
+    kwargs = mutator(_required_only_material_kwargs())
+    if should_pass:
+        mat = MaterialXS(**kwargs)
+        _check(f"{case_name} accepted", mat.G == 3)
+    else:
+        with pytest.raises(ValueError):
+            MaterialXS(**kwargs)
+
+
 def test_schema_validation() -> None:
     lib = make_synthetic_library(10)
     mat = next(iter(lib.materials.values()))
