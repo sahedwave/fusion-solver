@@ -170,6 +170,8 @@ def compute_tbr_components(
     For G != 3, explicit ``breeding_channels`` must be provided on the breeder
     material (``li6_breeding`` and ``li7_breeding`` vectors of shape ``(G,)``).
     No implicit group-index split is used outside the legacy 3-group fallback.
+    This preserves compatibility for historical 3-group workflows but is not an
+    external-physics validation claim for arbitrary group structures.
     """
     from fusion.materials import Li4SiO4
     import copy, dataclasses
@@ -191,7 +193,8 @@ def compute_tbr_components(
         if sigma_a_li6.shape != (G,) or sigma_a_li7.shape != (G,):
             raise ValueError(f"breeding channel vectors must have shape {(G,)}")
     elif G == 3:
-        # Legacy fallback path for historical 3-group behavior.
+        # Legacy compatibility fallback path for historical 3-group behavior.
+        # Not a general validated rule for arbitrary group structures.
         # Li-6 component: keep epi (g=1) and thermal (g=2), zero fast (g=0)
         sigma_a_li6 = nat_mat.sigma_a.copy()
         sigma_a_li6[0] = 0.0
@@ -202,7 +205,8 @@ def compute_tbr_components(
     else:
         raise ValueError(
             "compute_tbr_components requires explicit breeding_channels for G != 3 "
-            "(expected 'li6_breeding' and 'li7_breeding')."
+            "(expected 'li6_breeding' and 'li7_breeding'). "
+            "Legacy group-index fallback is compatibility-only for G=3."
         )
 
     # Build synthetic single-reaction materials by replacing sigma_a

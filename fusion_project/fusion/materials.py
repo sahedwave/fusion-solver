@@ -25,7 +25,9 @@ processed with NJOY2021 for an ITER-like neutron spectrum
 
 For G != 3: _uniform_fill applies a 1/(1+g) spectral weight decay
 from the fast-group value so the module works with any energy group
-structure used by the solver.
+structure used by the solver. This is an explicit compatibility fallback
+for software integration/testing; it is not a processed multigroup library
+and is not external-physics-validated for arbitrary group structures.
 
 All arrays must have length G.  FusionMaterial.__post_init__ enforces
 this at construction time.
@@ -180,6 +182,15 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
     li6_enrichment : float
         Atomic fraction of Li-6 (0.076 = natural, up to ~0.90 for
         enriched designs such as ITER/DEMO blanket modules).
+
+    Notes
+    -----
+    - The built-in Li-6/Li-7 channel split is physics-annotated only for the
+      legacy 3-group reference path.
+    - For G != 3, returned values come from `_uniform_fill` compatibility
+      fallback metadata and are not external-physics-validated.
+    - Production claims for arbitrary group structures require explicit
+      processed libraries and explicit channel metadata.
     """
     nat_li6  = 0.076
     scale_li6 = li6_enrichment / nat_li6

@@ -14,6 +14,25 @@ from scipy import sparse
 from sn_core import P1Material
 
 
+def _validate_library_schema_version(metadata: dict[str, Any]) -> None:
+    """Validate optional library schema-version metadata.
+
+    Compatibility policy:
+    - Missing ``metadata.schema_version`` is accepted for legacy libraries.
+    - When present, the value must be a string in ``fusion_multigroup_vN`` form.
+    """
+    if "schema_version" not in metadata:
+        return
+    version = metadata["schema_version"]
+    if not isinstance(version, str):
+        raise ValueError("metadata.schema_version must be a string when provided")
+    if not version.startswith("fusion_multigroup_v") or len(version) <= len("fusion_multigroup_v"):
+        raise ValueError(
+            "metadata.schema_version must use known format 'fusion_multigroup_vN' "
+            "(for example, 'fusion_multigroup_v1')"
+        )
+
+
 def _as_scattering_csc(values: object, G: int, label: str) -> sparse.csc_matrix:
     if sparse.issparse(values):
         matrix = values.astype(np.float64).tocsc()
@@ -225,11 +244,14 @@ class MultigroupLibrary:
                 group_index = int(value)
             if not (0 <= group_index < G):
                 raise ValueError(f"source_group_mapping[{source_name!r}] group index {group_index} out of range for G={G}")
+        metadata = dict(self.metadata)
+        _validate_library_schema_version(metadata)
         object.__setattr__(self, "energy_bounds", energy_bounds)
         object.__setattr__(self, "materials", materials)
         object.__setattr__(self, "group_names", group_names)
         object.__setattr__(self, "lethargy_widths", lethargy_widths)
         object.__setattr__(self, "source_group_mapping", source_group_mapping)
+        object.__setattr__(self, "metadata", metadata)
 
     @property
     def G(self) -> int:
@@ -291,6 +313,23 @@ def source_spectrum_for_named_source(
 def import_processed_fusion_xs_json(path: str | Path) -> MultigroupLibrary:
     """Load a constrained processed-fusion-XS JSON schema into MultigroupLibrary.
 
+    Top-level required keys:
+    - ``energy_bounds``
+    - ``materials``
+
+    Per-material required keys:
+    - ``name``
+    - ``sigma_t`` (``[G]``)
+    - ``sigma_s0`` (``[G,G]``)
+    - ``sigma_s1`` (``[G,G]``)
+
+    Per-material optional keys:
+    - ``reactions``
+    - ``heating``
+    - ``chi``
+    - ``nu_sigma_f``
+    - ``metadata``
+
     This is a schema-integration importer with strict validation. It does not
     imply external benchmark or experimental validation of the source data.
     """
@@ -302,15 +341,23 @@ def import_processed_fusion_xs_json(path: str | Path) -> MultigroupLibrary:
 
     metadata = dict(payload.get("metadata", {}))
     provenance = metadata.get("provenance")
-    if provenance is None or str(provenance).strip() == "":
+    units = metadata.get("units")
+    has_provenance = provenance is not None and str(provenance).strip() != ""
+    has_required_units = (
+        isinstance(units, dict)
+        and all(str(units.get(key, "")).strip() != "" for key in ("energy_bounds", "cross_sections", "heating"))
+    )
+    if has_provenance and has_required_units:
+        metadata["processed_external_format"] = True
+    else:
         warnings.warn(
-            "processed XS JSON missing metadata.provenance; imported as unqualified schema payload",
+            "processed XS JSON missing required metadata for processed_external_format "
+            "(need non-empty metadata.provenance and metadata.units "
+            "with energy_bounds/cross_sections/heating); imported as unqualified schema payload",
             UserWarning,
             stacklevel=2,
         )
         metadata["processed_external_format"] = False
-    else:
-        metadata["processed_external_format"] = True
 
     materials: dict[str, MaterialXS] = {}
     for key, mat in payload["materials"].items():
