@@ -107,6 +107,7 @@ G_MATRIX_CASES = [
 ]
 
 
+@pytest.mark.g_matrix
 @pytest.mark.parametrize("G", G_MATRIX_CASES)
 def test_source_and_io_matrix_parity(G: int) -> None:
     lib = make_synthetic_library(G)

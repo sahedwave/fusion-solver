@@ -1,0 +1,39 @@
+name: ci-heavy-nightly
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+jobs:
+  heavy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyyaml
+      - name: Run heavy deterministic matrix
+        env:
+          FUSION_BENCHMARK_STRICT_PERF: '1'
+        run: |
+          pytest fusion_project/test_multigroup_heavy.py -q -m heavy
+          python fusion_project/multigroup_benchmarks.py --tier heavy --output fusion_project/data/benchmarks/latest_heavy_report.json
+      - name: Write heavy CI status
+        run: |
+          python - <<'PY'
+          import json, datetime, subprocess
+          sha = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          meta = {
+            'timestamp_utc': datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+            'commit_sha': sha,
+            'success': True,
+            'report_path': 'fusion_project/data/benchmarks/latest_heavy_report.json'
+          }
+          open('fusion_project/data/benchmarks/heavy_ci_status.json','w',encoding='utf-8').write(json.dumps(meta, indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heavy-ci-artifacts
+          path: |
+            fusion_project/data/benchmarks/latest_heavy_report.json
+            fusion_project/data/benchmarks/heavy_ci_status.json

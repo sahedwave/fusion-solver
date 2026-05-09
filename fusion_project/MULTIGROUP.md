@@ -402,3 +402,24 @@ python fusion_project/golden_benchmarks.py --tier all --write-golden
 Regeneration should be treated as a numerical-governance event: document why the
 reference moved, confirm conservation/stability impact, and verify no hidden
 normalization or flux clipping was introduced.
+
+
+## Dynamic-G promotion checklist and CI gates
+
+Dynamic-G status promotion (`partial` -> `complete`) is governed by a machine-readable
+checklist at `fusion_project/dynamic_g_promotion_checklist.yaml` and enforced by
+`fusion_project/check_dynamic_g_promotion_policy.py`.
+
+CI lanes:
+
+- `ci-fast` (per-PR required): fast deterministic checks + policy checks.
+- `ci-heavy-nightly` (promotion-gating required): heavy deterministic matrix for
+  `G={70,175}` with strict performance mode and artifact retention.
+
+Promotion to `complete` requires a recent successful heavy artifact status file
+(`fusion_project/data/benchmarks/heavy_ci_status.json`) no older than the
+configured freshness window (`max_heavy_age_days`, currently 7).
+
+This policy hardening does not alter transport kernels or solver numerics;
+conservation/stability behavior remains governed by existing solver and
+validation suites.
