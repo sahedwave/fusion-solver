@@ -113,6 +113,18 @@ def _require_heavy_artifact_freshness(checklist: dict) -> None:
         raise SystemExit(f"Dynamic G promotion blocked: heavy CI artifact older than {max_age_days} days")
 
 
+
+def _require_metadata_driven_default_apis() -> None:
+    source_text = _read(ROOT / "fusion_project" / "fusion" / "source.py")
+    tbr_text = _read(ROOT / "fusion_project" / "fusion" / "tbr.py")
+    required_source = "make_dt_source requires energy_bounds or source_group_mapping"
+    if required_source not in source_text:
+        raise SystemExit("Dynamic G promotion blocked: make_dt_source default path is not metadata-driven")
+    if "def make_dt_source_legacy_group0(" not in source_text:
+        raise SystemExit("Dynamic G promotion blocked: explicit legacy source compatibility API missing")
+    if "def compute_tbr_components_legacy_g3(" not in tbr_text:
+        raise SystemExit("Dynamic G promotion blocked: explicit legacy TBR compatibility API missing")
+
 def _run_g_matrix_tests() -> None:
     result = subprocess.run([sys.executable, "-m", "pytest", "-m", "g_matrix", "-q"], cwd=ROOT, check=False)
     if result.returncode != 0:
@@ -129,6 +141,7 @@ def main() -> int:
     _require_marker_taxonomy()
     _require_no_untagged_fixed_group_assumptions(checklist)
     _require_collected_evidence(checklist)
+    _require_metadata_driven_default_apis()
     _require_heavy_artifact_freshness(checklist)
     _run_g_matrix_tests()
     print("Dynamic G policy check: promotion evidence satisfied.")
