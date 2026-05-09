@@ -31,9 +31,12 @@ For the 3-group model:
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from fusion.materials import FusionMaterial
 from fusion.mesh_utils import integrate_spatial
+
+LEGACY_API_REMOVAL_MILESTONE = "remove after release +2"
 
 
 def compute_tbr(
@@ -197,7 +200,16 @@ def compute_tbr_components(
     nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
 
     channels = nat_mat.breeding_channels or {}
-    if "li6_breeding" in channels or "li7_breeding" in channels:
+    if strict_dynamic_g and legacy_group_semantics:
+        raise ValueError("strict_dynamic_g=True forbids legacy_group_semantics fallback; provide explicit breeding_channels.")
+    if legacy_group_semantics:
+        if G != 3:
+            raise ValueError("legacy_group_semantics compatibility mode requires G==3")
+        sigma_a_li6 = nat_mat.sigma_a.copy()
+        sigma_a_li6[0] = 0.0
+        sigma_a_li7 = np.zeros(G)
+        sigma_a_li7[0] = nat_mat.sigma_a[0]
+    elif "li6_breeding" in channels or "li7_breeding" in channels:
         if "li6_breeding" not in channels or "li7_breeding" not in channels:
             raise ValueError("breeding_channels must provide both 'li6_breeding' and 'li7_breeding'")
         sigma_a_li6 = np.asarray(channels["li6_breeding"], dtype=np.float64)
