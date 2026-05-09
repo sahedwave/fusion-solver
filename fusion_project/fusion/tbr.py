@@ -60,6 +60,11 @@ def compute_tbr(
         Obtained via fusion.source.source_strength(Q_ext, mesh).
     li_region_mask : np.ndarray (nx,ny,nz) bool, optional
         Boolean mask selecting the Li-bearing region.
+    legacy_group_semantics : bool, optional
+        Compatibility-only legacy mode for historical 3-group Li-6/Li-7
+        splitting. When True and G==3, permits the old inferred mapping
+        (fast=Li-7, epi/thermal=Li-6). Default False requires explicit
+        breeding_channels metadata and never infers group semantics.
         None = integrate over full domain.
 
     Returns
@@ -120,6 +125,7 @@ def compute_tbr_components(
     mesh,
     source_strength_val: float,
     li_region_mask:      np.ndarray | None = None,
+    legacy_group_semantics: bool = False,
 ) -> dict:
     """
     Compute TBR split explicitly into Li-6 and Li-7 contributions.
@@ -146,6 +152,11 @@ def compute_tbr_components(
         Total D-T neutron emission rate  [n/s].
     li_region_mask : np.ndarray (nx,ny,nz) bool, optional
         Boolean mask selecting the Li-bearing region.
+    legacy_group_semantics : bool, optional
+        Compatibility-only legacy mode for historical 3-group Li-6/Li-7
+        splitting. When True and G==3, permits the old inferred mapping
+        (fast=Li-7, epi/thermal=Li-6). Default False requires explicit
+        breeding_channels metadata and never infers group semantics.
 
     Returns
     -------
@@ -159,7 +170,7 @@ def compute_tbr_components(
 
     Notes
     -----
-    Legacy fallback (G=3 only):
+    Compatibility-only legacy mode (G=3 only, opt-in):
         Li-6 reactions dominate groups 1 (epi) and 2 (thermal).
         Li-7 reactions dominate group 0 (fast) via threshold reaction.
         The split is encoded via the enrichment scaling in Li4SiO4():
@@ -167,9 +178,10 @@ def compute_tbr_components(
           sigma_a[epi]   scales with Li-6 fraction → assigned to tbr_li6
           sigma_a[therm] scales with Li-6 fraction → assigned to tbr_li6
 
-    For G != 3, explicit ``breeding_channels`` must be provided on the breeder
-    material (``li6_breeding`` and ``li7_breeding`` vectors of shape ``(G,)``).
-    No implicit group-index split is used outside the legacy 3-group fallback.
+    Outside compatibility-only legacy mode, explicit ``breeding_channels``
+    must be provided on the breeder material (``li6_breeding`` and
+    ``li7_breeding`` vectors of shape ``(G,)``). No implicit group-index
+    split is used in non-legacy paths.
     """
     from fusion.materials import Li4SiO4
     import copy, dataclasses
@@ -190,8 +202,8 @@ def compute_tbr_components(
         sigma_a_li7 = np.asarray(channels["li7_breeding"], dtype=np.float64)
         if sigma_a_li6.shape != (G,) or sigma_a_li7.shape != (G,):
             raise ValueError(f"breeding channel vectors must have shape {(G,)}")
-    elif G == 3:
-        # Legacy fallback path for historical 3-group behavior.
+    elif G == 3 and legacy_group_semantics:
+        # Compatibility-only legacy mode for historical 3-group behavior.
         # Li-6 component: keep epi (g=1) and thermal (g=2), zero fast (g=0)
         sigma_a_li6 = nat_mat.sigma_a.copy()
         sigma_a_li6[0] = 0.0
@@ -201,8 +213,10 @@ def compute_tbr_components(
         sigma_a_li7[0] = nat_mat.sigma_a[0]
     else:
         raise ValueError(
-            "compute_tbr_components requires explicit breeding_channels for G != 3 "
-            "(expected 'li6_breeding' and 'li7_breeding')."
+            "compute_tbr_components requires explicit breeding_channels "
+            "('li6_breeding' and 'li7_breeding') for non-legacy paths. "
+            "Set legacy_group_semantics=True to enable compatibility-only "
+            "legacy mode for G==3."
         )
 
     # Build synthetic single-reaction materials by replacing sigma_a
