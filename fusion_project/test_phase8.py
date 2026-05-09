@@ -41,7 +41,7 @@ from sn_core import (
 )
 from sn_solver import SolverConfig, solve_gmres_dsa
 
-from fusion.source    import make_dt_source, make_dt_source_legacy_group0, source_strength
+from fusion.source    import make_dt_source, make_dt_source, source_strength
 from fusion.materials import FusionMaterial, SS316, Li4SiO4, Beryllium
 from fusion.reactions import compute_reaction_rate, integrate_reaction_rate
 from fusion.tbr       import compute_tbr, compute_tbr_components, tbr_sensitivity_enrichment
@@ -329,7 +329,7 @@ def test_determinism():
 
 def test_source_normalisation():
     """
-    source_strength(make_dt_source_legacy_group0(..., strength=S), mesh) == S exactly.
+    source_strength(make_dt_source(..., strength=S), mesh) == S exactly.
 
     Mathematical guarantee:
         Q_ext[i,j,k,0] = S / (n_cells * V_cell)  (for volumetric)
@@ -339,7 +339,7 @@ def test_source_normalisation():
 
     for geom in ("point", "volumetric"):
         for S in (1.0, 1.234e14, 3.5e17):
-            Q = make_dt_source_legacy_group0(mesh, G=3, geometry=geom, strength=S)
+            Q = make_dt_source(mesh, G=3, geometry=geom, strength=S, source_group_mapping=np.array([1.0, 0.0, 0.0]))
             S_computed = source_strength(Q, mesh)
             rel_err = abs(S_computed - S) / S
             assert rel_err < 1e-14, (
@@ -590,7 +590,7 @@ def test_full_integration_pipeline():
     refl_map  = build_reflection_map(dirs)
 
     # Build D-T source (Phase 8 source model)
-    Q_ext   = make_dt_source_legacy_group0(mesh, G=mat_sn.G, geometry="point", strength=1.0)
+    Q_ext   = make_dt_source(mesh, G=mat_sn.G, geometry="point", strength=1.0, source_group_mapping=np.array([1.0, 0.0, 0.0]))
     S_DT    = source_strength(Q_ext, mesh)
     assert abs(S_DT - 1.0) < 1e-14, f"Source strength error: {S_DT}"
 
