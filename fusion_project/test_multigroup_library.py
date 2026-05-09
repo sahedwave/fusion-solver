@@ -38,7 +38,42 @@ def _check(name: str, condition: bool, detail: str = "") -> None:
     print(f"[PASS] {name}" + (f" - {detail}" if detail else ""))
 
 
-@pytest.mark.g_matrix
+
+
+G_MATRIX_CASES = [
+    1,
+    3,
+    10,
+    27,
+    pytest.param(70, marks=pytest.mark.heavy),
+    pytest.param(175, marks=pytest.mark.heavy),
+]
+
+
+@pytest.mark.parametrize("G", G_MATRIX_CASES)
+def test_source_and_io_matrix_parity(G: int) -> None:
+    lib = make_synthetic_library(G)
+    spectrum = dt_source_spectrum(lib.energy_bounds)
+
+    mesh = Mesh(2, 2, 2, 1.0, 1.0, 1.0)
+    Q = make_spectrum_source(mesh, spectrum, strength=3.5, geometry="gaussian")
+    vol = mesh.dx * mesh.dy * mesh.dz
+    _check(f"{G}-group source shape", Q.shape == (2, 2, 2, G))
+    _check(f"{G}-group source conservation", abs(float(np.sum(Q) * vol) - 3.5) < 1.0e-12)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for suffix in ("json", "npz"):
+            path = tmp_path / f"g{G}.{suffix}"
+            save_multigroup_library(lib, path)
+            loaded = load_multigroup_library(path)
+            key = next(iter(lib.materials))
+            _check(f"{G}-group {suffix} roundtrip G", loaded.G == lib.G)
+            _check(
+                f"{G}-group {suffix} sigma_t",
+                bool(np.allclose(loaded.materials[key].sigma_t, lib.materials[key].sigma_t)),
+            )
+
 def test_schema_validation() -> None:
     lib = make_synthetic_library(10)
     mat = next(iter(lib.materials.values()))
