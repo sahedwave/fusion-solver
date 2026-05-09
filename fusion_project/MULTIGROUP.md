@@ -151,6 +151,57 @@ The source is normalized so:
 sum(Q_ext) * dx * dy * dz == strength
 ```
 
+## Known group-semantics assumptions
+
+The solver core and multigroup data layer are dynamic in group count: `P1Material`
+and `MaterialXS` derive `G` from array lengths, validate `(G,)` and `(G, G)`
+shapes, and the sparse sweep path iterates over `mat.G`.  That does **not** mean
+all fusion convenience helpers are physically group-agnostic.  The following
+assumptions are intentionally documented so production work does not mistake
+software-compatible fallbacks for processed multigroup physics data.
+
+### Acceptable synthetic/software-regression assumptions
+
+These are acceptable for current regression tests and examples, but are not a
+claim of production physics validity:
+
+- `fusion/materials.py` provides reference values for a **3-group**
+  fast/epithermal/thermal ordering: `g=0 fast`, `g=1 epi`, `g=2 thermal`.
+- For `G != 3`, fusion material factories use `_uniform_fill`, a synthetic
+  `1/(1+g)` decay from the fast-group value.  This is a compatibility fallback
+  that preserves array shape and deterministic behavior; it is not a real group
+  collapse from FENDL/NJOY/OpenMC data.
+- `test_phase8.py` is a 3-group fusion post-processing validation suite.  Its
+  point-source and D-T-source checks intentionally verify the legacy convention
+  that group 0 is the fast/D-T source group and groups `> 0` receive no direct
+  D-T source when no `energy_bounds` are provided.
+- Synthetic multigroup tests in `test_multigroup_library.py` validate arbitrary
+  source spectra and energy-bound D-T mapping, but those libraries remain
+  software-validation data rather than nuclear design data.
+
+### Production blockers before claiming truly dynamic fusion group semantics
+
+The following must be replaced by explicit metadata or reaction channels before
+claiming production-grade, group-agnostic fusion post-processing:
+
+- `make_dt_source(..., energy_bounds=None)` places 14.1 MeV neutrons in group 0
+  by convention.  Production workflows should provide energy bounds or an
+  explicit source-group mapping so the D-T source group is data-driven.
+- `compute_tbr_components()` assumes Li-7 contribution lives in group 0 and
+  Li-6 contribution lives in groups 1--2 for the 3-group model; for general
+  `G`, it still treats group 0 as Li-7 and all nonzero groups as Li-6.
+- Li-bearing material factories encode enrichment effects through the current
+  3-group fast/epi/thermal arrays or the synthetic `_uniform_fill` fallback.
+  Production TBR splitting should instead consume explicit `Li6`/`Li7`
+  reaction-channel vectors with shape `(G,)`.
+- Heating, damage, and reaction post-processing are shape-generic once supplied
+  with `(G,)` material vectors, but physical validity depends on those vectors
+  being generated for the same energy structure as the transport solve.
+
+In short: **solver-core dynamic `G` support is present; production fusion
+group semantics are only partially dynamic until source mappings and reaction
+channels become metadata-driven.**
+
 ## Synthetic Libraries
 
 Generated examples live under:
