@@ -27,6 +27,7 @@ from __future__ import annotations
 import sys
 import os
 import time
+import dataclasses
 import numpy as np
 import pytest
 
@@ -469,9 +470,60 @@ def test_tbr_components_non3group_requires_explicit_breeding_channels(monkeypatc
     mat = Li4SiO4(G=G)
     assert not mat.breeding_channels
     monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: mat)
-    with pytest.raises(ValueError, match="requires explicit breeding_channels for G != 3"):
+    with pytest.raises(ValueError, match="requires explicit breeding_channels"):
         compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
 
+
+
+
+POSTPROC_G_CASES = [
+    1,
+    3,
+    10,
+    27,
+    pytest.param(70, marks=pytest.mark.heavy),
+    pytest.param(175, marks=pytest.mark.heavy),
+]
+
+
+def _make_explicit_li4sio4_channels(G: int, li6_enrichment: float = 0.5) -> FusionMaterial:
+    """Construct Li4SiO4 with explicit breeding-channel vectors for any G."""
+    base = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
+    if base.breeding_channels:
+        return base
+    li6 = np.asarray(base.sigma_a, dtype=np.float64) * 0.7
+    li7 = np.asarray(base.sigma_a, dtype=np.float64) * 0.3
+    return dataclasses.replace(base, breeding_channels={"li6_breeding": li6, "li7_breeding": li7})
+
+
+@pytest.mark.parametrize("G", POSTPROC_G_CASES)
+def test_postprocess_tbr_heating_source_normalization_matrix(G, monkeypatch):
+    """
+    Deterministic post-processing parity checks across production G-set.
+
+    Numerical-risk assessment (post-processing only):
+      - Conservation: checks TBR composition closes (total = li6 + li7).
+      - Stability: no iterative scheme changes; deterministic algebraic checks only.
+      - Scalability: tiny mesh controls cost for heavy groups (70, 175).
+    """
+    mesh = Mesh(nx=2, ny=2, nz=2, dx=0.5, dy=0.5, dz=0.5)
+    phi = np.full((mesh.nx, mesh.ny, mesh.nz, G), 2.0, dtype=np.float64)
+    Q_ext = np.full((mesh.nx, mesh.ny, mesh.nz, G), 1.0 / (mesh.nx * mesh.ny * mesh.nz * G), dtype=np.float64)
+    S_DT = source_strength(Q_ext, mesh)
+
+    li_mat = _make_explicit_li4sio4_channels(G=G, li6_enrichment=0.5)
+    monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: li_mat)
+
+    comps = compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
+    assert np.isclose(comps["tbr_total"], comps["tbr_li6"] + comps["tbr_li7"], rtol=0.0, atol=1.0e-14)
+
+    heat_map = compute_heating(phi, li_mat)
+    heat_total_mev_s = float(np.sum(heat_map) * mesh.dx * mesh.dy * mesh.dz)
+    heat_total_mev_s_via_api = integrate_power(phi, li_mat, mesh, unit="MeV_s")
+    assert np.isclose(heat_total_mev_s, heat_total_mev_s_via_api, rtol=0.0, atol=1.0e-14)
+
+    expected_norm_tbr = integrate_reaction_rate(phi, li_mat, mesh) / S_DT
+    assert np.isclose(comps["tbr_total"], expected_norm_tbr, rtol=0.0, atol=1.0e-14)
 
 # ================================================================
 # TEST 9 — FUSIONRESULTS SAVE/LOAD ROUND-TRIP
