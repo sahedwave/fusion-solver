@@ -74,36 +74,6 @@ def make_dt_source_legacy_group0(
     return make_spectrum_source(mesh, spectrum, strength=strength, geometry=geometry, plasma_fraction=plasma_fraction, gaussian_sigma_cm=gaussian_sigma_cm)
 
 
-def make_dt_source(
-    mesh,
-    G: int,
-    geometry: str = "point",
-    strength: float = 1.0,
-    plasma_fraction: float = 0.25,
-    gaussian_sigma_cm: float | None = None,
-    energy_bounds: np.ndarray | None = None,
-    source_group_mapping: np.ndarray | None = None,
-) -> np.ndarray:
-    """Production Dynamic-G source builder requiring explicit metadata mapping."""
-    if energy_bounds is not None:
-        spectrum = dt_source_spectrum(energy_bounds)
-        if spectrum.shape != (G,):
-            raise ValueError(f"energy_bounds imply G={spectrum.shape[0]}, but requested G={G}")
-        return make_spectrum_source(mesh, spectrum, strength=strength, geometry=geometry, plasma_fraction=plasma_fraction, gaussian_sigma_cm=gaussian_sigma_cm)
-    if source_group_mapping is None:
-        raise ValueError("make_dt_source requires energy_bounds or source_group_mapping in production mode. Use make_dt_source_legacy_group0 for compatibility-only behavior.")
-    spectrum = np.asarray(source_group_mapping, dtype=np.float64)
-    if spectrum.shape != (G,):
-        raise ValueError(f"source_group_mapping must have shape {(G,)}, got {spectrum.shape}")
-    if np.any(spectrum < 0):
-        raise ValueError("source_group_mapping must be nonnegative")
-    total = float(np.sum(spectrum))
-    if total <= 0.0:
-        raise ValueError("source_group_mapping must have positive sum")
-    spectrum = spectrum / total
-    return make_spectrum_source(mesh, spectrum, strength=strength, geometry=geometry, plasma_fraction=plasma_fraction, gaussian_sigma_cm=gaussian_sigma_cm)
-
-
 def source_strength(Q_ext: np.ndarray, mesh) -> float:
     """
     Integrate Q_ext over the full volume -> total neutron emission rate.

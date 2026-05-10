@@ -71,8 +71,11 @@ def _require_marker_taxonomy() -> None:
 def _require_no_untagged_fixed_group_assumptions(checklist: dict) -> None:
     tags = tuple(checklist.get("required_legacy_annotations", ["legacy", "fallback"]))
     offenders: list[str] = []
-    for path in (ROOT / "fusion_project").rglob("*.py"):
-        if path.name in {"check_dynamic_g_promotion_policy.py"}:
+    scope = [* (ROOT / "fusion_project" / "fusion").glob("*.py"),
+             ROOT / "fusion_project" / "run_blanket_example.py",
+             ROOT / "fusion_project" / "golden_benchmarks.py"]
+    for path in scope:
+        if not path.exists():
             continue
         lines = path.read_text(encoding="utf-8").splitlines()
         for lineno, line in enumerate(lines, start=1):
@@ -116,10 +119,44 @@ def _require_heavy_artifact_freshness(checklist: dict) -> None:
 
 def _require_metadata_driven_default_apis() -> None:
     source_text = _read(ROOT / "fusion_project" / "fusion" / "source.py")
-    tbr_text = _read(ROOT / "fusion_project" / "fusion" / "tbr.py")
     required_source = "make_dt_source requires energy_bounds or source_group_mapping"
     if required_source not in source_text:
         raise SystemExit("Dynamic G promotion blocked: make_dt_source default path is not metadata-driven")
+    materials_text = _read(ROOT / "fusion_project" / "fusion" / "materials.py")
+    for ctor in ("def SS316(", "def Li4SiO4(", "def Beryllium(", "def Tungsten("):
+        if ctor not in materials_text:
+            raise SystemExit("Dynamic G policy blocked: production constructors must require explicit vectors/channels")
+    banned_passthrough = (
+        "return SS316_legacy_compat(",
+        "mat = Li4SiO4_legacy_compat(",
+        "return Beryllium_legacy_compat(",
+        "return Tungsten_legacy_compat(",
+    )
+    for pattern in banned_passthrough:
+        if pattern in materials_text:
+            raise SystemExit("Dynamic G policy blocked: production constructors still pass through legacy_compat helpers")
+
+
+def _require_no_runtime_legacy_helper_usage() -> None:
+    legacy_re = re.compile(r"\blegacy_compat\b")
+    offenders: list[str] = []
+    scope = [* (ROOT / "fusion_project" / "fusion").glob("*.py"),
+             ROOT / "fusion_project" / "run_blanket_example.py",
+             ROOT / "fusion_project" / "golden_benchmarks.py"]
+    for path in scope:
+        if not path.exists():
+            continue
+        rel = path.relative_to(ROOT)
+        if rel.as_posix() == "fusion_project/fusion/materials.py":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if legacy_re.search(line):
+                offenders.append(f"{rel}:{lineno}")
+    if offenders:
+        raise SystemExit(
+            "Dynamic G policy blocked: legacy_compat usage found in non-test runtime modules: "
+            + ", ".join(offenders[:12])
+        )
 
 
 def _run_g_matrix_tests() -> None:
@@ -130,15 +167,18 @@ def _run_g_matrix_tests() -> None:
 
 def main() -> int:
     checklist = _load_checklist()
+    # Always-on enforcement for production-path invariants.
+    _require_marker_taxonomy()
+    _require_collected_evidence(checklist)
+    _require_metadata_driven_default_apis()
+    _require_no_runtime_legacy_helper_usage()
+
     if not _doc_changed_partial_to_complete():
-        print("Dynamic G policy check: no partial→complete promotion detected; skipping enforcement gate.")
+        print("Dynamic G policy check: always-on invariants satisfied; no partial→complete promotion detected.")
         return 0
     doc_text = _read(MULTIGROUP_DOC)
     _require_fallback_caveats(doc_text, checklist)
-    _require_marker_taxonomy()
     _require_no_untagged_fixed_group_assumptions(checklist)
-    _require_collected_evidence(checklist)
-    _require_metadata_driven_default_apis()
     _require_heavy_artifact_freshness(checklist)
     _run_g_matrix_tests()
     print("Dynamic G policy check: promotion evidence satisfied.")

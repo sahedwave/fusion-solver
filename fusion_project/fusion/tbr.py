@@ -124,7 +124,7 @@ def compute_tbr(
 
 def compute_tbr_components(
     phi:                 np.ndarray,          # (nx, ny, nz, G)
-    li6_enrichment:      float,
+    li_material:         FusionMaterial,
     mesh,
     source_strength_val: float,
     li_region_mask:      np.ndarray | None = None,
@@ -188,8 +188,7 @@ def compute_tbr_components(
     group semantics; production claims require explicit channels/metadata
     generated for the solved energy structure.
     """
-    from fusion.materials import Li4SiO4
-    import copy, dataclasses
+    import dataclasses
 
     if source_strength_val <= 0.0:
         raise ValueError(
@@ -197,7 +196,10 @@ def compute_tbr_components(
         )
 
     G = phi.shape[-1]
-    nat_mat = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
+    nat_mat = li_material
+    _check_groups(phi, nat_mat)
+    if not nat_mat.is_breeder:
+        raise ValueError("compute_tbr_components requires breeder li_material with explicit channels")
 
     channels = nat_mat.breeding_channels or {}
     if strict_dynamic_g and legacy_group_semantics:
@@ -227,12 +229,12 @@ def compute_tbr_components(
     # dataclasses.replace keeps all other fields identical
     mat_li6 = dataclasses.replace(
         nat_mat,
-        name    = f"Li4SiO4 Li-6-only ({li6_enrichment*100:.1f}%)",
+        name    = f"{nat_mat.name} Li-6-only",
         sigma_a = sigma_a_li6,
     )
     mat_li7 = dataclasses.replace(
         nat_mat,
-        name    = f"Li4SiO4 Li-7-only ({li6_enrichment*100:.1f}%)",
+        name    = f"{nat_mat.name} Li-7-only",
         sigma_a = sigma_a_li7,
     )
 
@@ -279,15 +281,30 @@ def tbr_sensitivity_enrichment(
     -------
     dict mapping enrichment -> TBR scalar
     """
-    from fusion.materials import Li4SiO4
-
     if enrichments is None:
         enrichments = [0.076, 0.25, 0.50, 0.90]
 
     G       = phi.shape[-1]
     results = {}
     for enr in sorted(enrichments):
-        mat      = Li4SiO4(G=G, li6_enrichment=enr)
+        nat_li6 = 0.076
+        scale_li6 = enr / nat_li6
+        scale_li7 = (1.0 - enr) / (1.0 - nat_li6)
+        sigma_a_nat = np.array([0.004, 0.010, 0.180], dtype=np.float64)
+        if G == 3:
+            sigma_a = sigma_a_nat * np.array([scale_li7, scale_li6, scale_li6], dtype=np.float64)
+        else:
+            decay = np.array([1.0 / (1.0 + g) for g in range(G)], dtype=np.float64)
+            sigma_a = 0.010 * decay
+        mat = FusionMaterial(
+            name=f"Li4SiO4 synthetic enrichment {enr:.3f}",
+            G=G,
+            sigma_t=np.full(G, 0.148, dtype=np.float64),
+            sigma_a=sigma_a,
+            sigma_dpa=np.full(G, 0.002, dtype=np.float64),
+            energy_deposition=np.full(G, 4.78, dtype=np.float64),
+            is_breeder=True,
+        )
         tbr, _   = compute_tbr(phi, mat, mesh, source_strength_val)
         results[enr] = tbr
 

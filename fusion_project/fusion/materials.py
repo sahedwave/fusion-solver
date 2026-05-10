@@ -361,28 +361,70 @@ def _uniform_fill(
     )
 
 
-def SS316(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
-    if strict_dynamic_g and G != 3 and sigma_a is None:
-        raise ValueError("SS316 strict_dynamic_g requires explicit group-wise vectors for G!=3")
-    return SS316_legacy_compat(G=G)
+def SS316(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="316L Stainless Steel",
+        G=G,
+        density=7.99,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+    )
 
 
-def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076, *, strict_dynamic_g: bool = False, breeding_channels: dict[str, np.ndarray] | None = None) -> FusionMaterial:
-    if strict_dynamic_g and G != 3 and breeding_channels is None:
-        raise ValueError("Li4SiO4 strict_dynamic_g requires explicit breeding_channels for G!=3")
-    mat = Li4SiO4_legacy_compat(G=G, li6_enrichment=li6_enrichment)
-    if breeding_channels is not None:
-        mat.breeding_channels = {k: np.asarray(v, dtype=np.float64) for k, v in breeding_channels.items()}
-    return mat
+def Li4SiO4(
+    *,
+    sigma_t: np.ndarray,
+    sigma_a: np.ndarray,
+    sigma_dpa: np.ndarray,
+    energy_deposition: np.ndarray,
+    li6_enrichment: float = 0.076,
+    breeding_channels: dict[str, np.ndarray],
+) -> FusionMaterial:
+    """Production constructor requiring explicit vectors and breeding channels."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name=f"Li4SiO4 (Li-6 {li6_enrichment*100:.1f}%)",
+        G=G,
+        density=2.39,
+        is_breeder=True,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+        breeding_channels={k: np.asarray(v, dtype=np.float64) for k, v in breeding_channels.items()},
+    )
 
 
-def Beryllium(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
-    if strict_dynamic_g and G != 3 and sigma_a is None:
-        raise ValueError("Beryllium strict_dynamic_g requires explicit group-wise vectors for G!=3")
-    return Beryllium_legacy_compat(G=G)
+def Beryllium(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="Beryllium",
+        G=G,
+        density=1.85,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+    )
 
 
-def Tungsten(G: int = 3, *, strict_dynamic_g: bool = False, sigma_a: np.ndarray | None = None) -> FusionMaterial:
-    if strict_dynamic_g and G != 3 and sigma_a is None:
-        raise ValueError("Tungsten strict_dynamic_g requires explicit group-wise vectors for G!=3")
-    return Tungsten_legacy_compat(G=G)
+def Tungsten(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="Tungsten (W)",
+        G=G,
+        density=19.3,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+    )
