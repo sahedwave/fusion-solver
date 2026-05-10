@@ -329,7 +329,7 @@ def test_determinism():
 
 def test_source_normalisation():
     """
-    source_strength(make_dt_source(..., strength=S), mesh) == S exactly.
+    source_strength(make_dt_source_legacy_group0(..., strength=S), mesh) == S exactly.
 
     Mathematical guarantee:
         Q_ext[i,j,k,0] = S / (n_cells * V_cell)  (for volumetric)

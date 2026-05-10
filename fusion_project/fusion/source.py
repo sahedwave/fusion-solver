@@ -36,12 +36,15 @@ NO solver internals are touched or imported here.
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from fusion.mesh_utils import integrate_spatial
 from sn_core import dt_source_spectrum, make_spectrum_source
 
+LEGACY_API_REMOVAL_MILESTONE = "remove after release +2"
 
-def make_dt_source(
+
+def make_dt_source_legacy_group0(
     mesh,
     G: int,
     geometry: str = "point",
