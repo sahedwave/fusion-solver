@@ -338,10 +338,27 @@ def _case_metrics(case: GoldenCase) -> dict[str, Any]:
         material = _postprocessing_transport_material()
         source = _center_dt_source(mesh, material.G, case.source_strength)
         result = _solve(case, material, source)
-        components = compute_tbr_components(result.phi, 0.076, mesh, source_strength(source, mesh))
+        sigma_a_scaled = np.array([0.004, 0.010, 0.180], dtype=np.float64)
+        li_material = Li4SiO4(
+            sigma_t=np.array([0.148, 0.212, 0.480], dtype=np.float64),
+            sigma_a=sigma_a_scaled,
+            sigma_dpa=np.array([0.002, 0.001, 0.0003], dtype=np.float64),
+            energy_deposition=np.array([4.80, 1.50, 4.78], dtype=np.float64),
+            li6_enrichment=0.076,
+            breeding_channels={
+                "li6_breeding": sigma_a_scaled * np.array([0.0, 1.0, 1.0], dtype=np.float64),
+                "li7_breeding": sigma_a_scaled * np.array([1.0, 0.0, 0.0], dtype=np.float64),
+            },
+        )
+        components = compute_tbr_components(
+            result.phi,
+            li_material=li_material,
+            mesh=mesh,
+            source_strength_val=source_strength(source, mesh),
+        )
         metrics = _common_metrics(case, material, source, result)
         metrics["tbr"] = {
-            "material_name": Li4SiO4().name,
+            "material_name": li_material.name,
             "li6_enrichment": 0.076,
             "tbr_total": float(components["tbr_total"]),
             "tbr_li6": float(components["tbr_li6"]),
@@ -355,16 +372,22 @@ def _case_metrics(case: GoldenCase) -> dict[str, Any]:
         material = _postprocessing_transport_material()
         source = _center_dt_source(mesh, material.G, case.source_strength)
         result = _solve(case, material, source)
-        heat = compute_heating_watts(result.phi, SS316())
+        ss316 = SS316(
+            sigma_t=np.array([0.282, 0.520, 0.890], dtype=np.float64),
+            sigma_a=np.array([0.008, 0.012, 0.045], dtype=np.float64),
+            sigma_dpa=np.array([0.045, 0.018, 0.003], dtype=np.float64),
+            energy_deposition=np.array([6.50, 2.10, 0.80], dtype=np.float64),
+        )
+        heat = compute_heating_watts(result.phi, ss316)
         metrics = _common_metrics(case, material, source, result)
         metrics["heating"] = {
-            "material_name": SS316().name,
-            "integrated_power_watts": integrate_power(result.phi, SS316(), mesh, unit="W"),
-            "integrated_power_mev_per_s": integrate_power(result.phi, SS316(), mesh, unit="MeV_s"),
+            "material_name": ss316.name,
+            "integrated_power_watts": integrate_power(result.phi, ss316, mesh, unit="W"),
+            "integrated_power_mev_per_s": integrate_power(result.phi, ss316, mesh, unit="MeV_s"),
             "peak_heating_w_per_cm3": float(np.max(heat)),
             "mean_heating_w_per_cm3": float(np.mean(heat)),
             "peak_to_mean_heating": float(np.max(heat) / np.mean(heat)),
-            "peak_xmin_heat_flux_w_per_cm2": peak_heat_flux(result.phi, SS316(), mesh, face="xmin"),
+            "peak_xmin_heat_flux_w_per_cm2": peak_heat_flux(result.phi, ss316, mesh, face="xmin"),
         }
         return metrics
 

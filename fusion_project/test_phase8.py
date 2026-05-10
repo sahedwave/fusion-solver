@@ -42,7 +42,7 @@ from sn_core import (
 from sn_solver import SolverConfig, solve_gmres_dsa
 
 from fusion.source    import make_dt_source, source_strength
-from fusion.materials import FusionMaterial, SS316, Li4SiO4, Beryllium
+from fusion.materials import FusionMaterial, SS316_legacy_compat, Li4SiO4_legacy_compat, Beryllium_legacy_compat
 from fusion.reactions import compute_reaction_rate, integrate_reaction_rate
 from fusion.tbr       import compute_tbr, compute_tbr_components, tbr_sensitivity_enrichment
 from fusion.heating   import (compute_heating, compute_heating_watts,
@@ -90,7 +90,7 @@ def test_reaction_rate_consistency():
         R_total scales with source strength (linearity)
     """
     phi, _, mesh, Q_ext = _run_solver(nx=6)
-    mat = SS316()
+    mat = SS316_legacy_compat()
 
     R1 = compute_reaction_rate(phi, mat)
     R2 = compute_reaction_rate(2.0 * phi, mat)
@@ -180,7 +180,7 @@ def test_heating_localisation():
     that boundary cells have non-trivial heating reflecting flux level.)
     """
     phi, _, mesh, _ = _run_solver(nx=8)
-    mat = SS316()
+    mat = SS316_legacy_compat()
 
     Q_heat = compute_heating_watts(phi, mat)
 
@@ -299,8 +299,8 @@ def test_determinism():
     """
     phi, _, mesh, Q_ext = _run_solver(nx=6)
 
-    mat  = SS316()
-    li_m = Li4SiO4()
+    mat  = SS316_legacy_compat()
+    li_m = Li4SiO4_legacy_compat()
     S_DT = source_strength(Q_ext, mesh)
 
     # Run post-processing twice from the SAME phi
@@ -339,7 +339,7 @@ def test_source_normalisation():
 
     for geom in ("point", "volumetric"):
         for S in (1.0, 1.234e14, 3.5e17):
-            Q = make_dt_source(mesh, G=3, geometry=geom, strength=S)
+            Q = make_dt_source(mesh, G=3, geometry=geom, strength=S, source_group_mapping=np.array([1.0, 0.0, 0.0]))
             S_computed = source_strength(Q, mesh)
             rel_err = abs(S_computed - S) / S
             assert rel_err < 1e-14, (
@@ -362,7 +362,7 @@ def test_tbr_nonbreeder_rejection():
     Passing a non-breeder material (SS316) to compute_tbr raises ValueError.
     """
     phi, _, mesh, Q_ext = _run_solver(nx=4)
-    mat  = SS316()   # is_breeder = False
+    mat  = SS316_legacy_compat()   # is_breeder = False
     S_DT = source_strength(Q_ext, mesh)
 
     try:
@@ -384,7 +384,7 @@ def test_group_mismatch():
     All fusion functions detect G mismatch and raise ValueError.
     """
     phi   = np.ones((4, 4, 4, 3))        # G=3
-    mat2  = SS316(G=2)                    # G=2 — mismatch
+    mat2  = SS316_legacy_compat(G=2)                    # G=2 — mismatch
 
     for fn_name, fn in [
         ("compute_reaction_rate", lambda: compute_reaction_rate(phi, mat2)),
@@ -403,7 +403,7 @@ def test_group_mismatch():
 def test_tbr_components_legacy_3group_fallback_consistency():
     phi, _, mesh, Q_ext = _run_solver(nx=4)
     S_DT = source_strength(Q_ext, mesh)
-    components = compute_tbr_components(phi, li6_enrichment=0.076, mesh=mesh, source_strength_val=S_DT)
+    components = compute_tbr_components(phi, li_material=_make_explicit_li4sio4_channels(G=phi.shape[-1], li6_enrichment=0.076), mesh=mesh, source_strength_val=S_DT)
     assert np.isclose(
         components["tbr_total"],
         components["tbr_li6"] + components["tbr_li7"],
@@ -431,7 +431,7 @@ def test_tbr_components_explicit_channels_g5_split_exact(monkeypatch):
     )
     total, _ = compute_tbr(phi, mat, mesh, S_DT)
     monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: mat)
-    comps = compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
+    comps = compute_tbr_components(phi, li_material=mat, mesh=mesh, source_strength_val=S_DT)
     assert np.isclose(comps["tbr_total"], total, rtol=0.0, atol=1.0e-13)
     assert np.isclose(comps["tbr_total"], comps["tbr_li6"] + comps["tbr_li7"], rtol=0.0, atol=1.0e-13)
 
@@ -452,7 +452,7 @@ def test_tbr_components_invalid_channel_shape_raises():
 
 def test_non3group_material_fallback_metadata_and_shapes():
     G = 5
-    mats = [SS316(G=G), Li4SiO4(G=G), Beryllium(G=G)]
+    mats = [SS316_legacy_compat(G=G), Li4SiO4_legacy_compat(G=G), Beryllium_legacy_compat(G=G)]
     for mat in mats:
         assert mat.sigma_t.shape == (G,)
         assert mat.sigma_a.shape == (G,)
@@ -467,11 +467,11 @@ def test_tbr_components_non3group_requires_explicit_breeding_channels(monkeypatc
     phi = np.ones((2, 2, 2, G), dtype=np.float64)
     mesh = Mesh(nx=2, ny=2, nz=2, dx=1.0, dy=1.0, dz=1.0)
     S_DT = 1.0
-    mat = Li4SiO4(G=G)
+    mat = Li4SiO4_legacy_compat(G=G)
     assert not mat.breeding_channels
     monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: mat)
     with pytest.raises(ValueError, match="requires explicit breeding_channels"):
-        compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
+        compute_tbr_components(phi, li_material=mat, mesh=mesh, source_strength_val=S_DT)
 
 
 
@@ -488,7 +488,7 @@ POSTPROC_G_CASES = [
 
 def _make_explicit_li4sio4_channels(G: int, li6_enrichment: float = 0.5) -> FusionMaterial:
     """Construct Li4SiO4 with explicit breeding-channel vectors for any G."""
-    base = Li4SiO4(G=G, li6_enrichment=li6_enrichment)
+    base = Li4SiO4_legacy_compat(G=G, li6_enrichment=li6_enrichment)
     if base.breeding_channels:
         return base
     li6 = np.asarray(base.sigma_a, dtype=np.float64) * 0.7
@@ -514,7 +514,7 @@ def test_postprocess_tbr_heating_source_normalization_matrix(G, monkeypatch):
     li_mat = _make_explicit_li4sio4_channels(G=G, li6_enrichment=0.5)
     monkeypatch.setattr("fusion.materials.Li4SiO4", lambda G, li6_enrichment: li_mat)
 
-    comps = compute_tbr_components(phi, li6_enrichment=0.5, mesh=mesh, source_strength_val=S_DT)
+    comps = compute_tbr_components(phi, li_material=_make_explicit_li4sio4_channels(G=phi.shape[-1], li6_enrichment=0.5), mesh=mesh, source_strength_val=S_DT)
     assert np.isclose(comps["tbr_total"], comps["tbr_li6"] + comps["tbr_li7"], rtol=0.0, atol=1.0e-14)
 
     heat_map = compute_heating(phi, li_mat)
@@ -536,8 +536,8 @@ def test_fusionresults_roundtrip():
     import tempfile, os
 
     phi, _, mesh, Q_ext = _run_solver(nx=6)
-    mat  = SS316()
-    li_m = Li4SiO4()
+    mat  = SS316_legacy_compat()
+    li_m = Li4SiO4_legacy_compat()
 
     results = FusionResults.from_solver(phi, mesh, mat, Q_ext,
                                         li_material=li_m)
@@ -590,7 +590,7 @@ def test_full_integration_pipeline():
     refl_map  = build_reflection_map(dirs)
 
     # Build D-T source (Phase 8 source model)
-    Q_ext   = make_dt_source(mesh, G=mat_sn.G, geometry="point", strength=1.0)
+    Q_ext   = make_dt_source(mesh, G=mat_sn.G, geometry="point", strength=1.0, source_group_mapping=np.array([1.0, 0.0, 0.0]))
     S_DT    = source_strength(Q_ext, mesh)
     assert abs(S_DT - 1.0) < 1e-14, f"Source strength error: {S_DT}"
 
@@ -600,8 +600,8 @@ def test_full_integration_pipeline():
     phi_before = result.phi.copy()
 
     # Post-process (Phase 8)
-    mat_fw = SS316()
-    mat_br = Li4SiO4()
+    mat_fw = SS316_legacy_compat()
+    mat_br = Li4SiO4_legacy_compat()
     fr     = FusionResults.from_solver(result.phi, mesh, mat_fw, Q_ext,
                                        li_material=mat_br)
 

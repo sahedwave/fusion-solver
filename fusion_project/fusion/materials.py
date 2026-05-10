@@ -125,7 +125,7 @@ class FusionMaterial:
 # Values are representative for scoping / benchmarking.
 # ================================================================
 
-def SS316(G: int = 3) -> FusionMaterial:
+def SS316_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     316L Stainless Steel — first wall / structural material.
 
@@ -159,7 +159,7 @@ def SS316(G: int = 3) -> FusionMaterial:
                          sigma_dpa0=0.045, edep0=6.50)
 
 
-def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
+def Li4SiO4_legacy_compat(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
     """
     Li4SiO4 — lithium orthosilicate tritium breeder blanket.
 
@@ -216,7 +216,7 @@ def Li4SiO4(G: int = 3, li6_enrichment: float = 0.076) -> FusionMaterial:
                          sigma_dpa0=0.002, edep0=4.78)
 
 
-def Beryllium(G: int = 3) -> FusionMaterial:
+def Beryllium_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     Beryllium — neutron multiplier / reflector.
 
@@ -292,7 +292,7 @@ def Helium(G: int = 3) -> FusionMaterial:
     )
 
 
-def Tungsten(G: int = 3) -> FusionMaterial:
+def Tungsten_legacy_compat(G: int = 3) -> FusionMaterial:
     """
     Tungsten (W) — first-wall / divertor armour material.
 
@@ -358,4 +358,73 @@ def _uniform_fill(
             "validation_status": "not_fendl_njoy_openmc_validated",
             "notes": "G!=3 compatibility fallback using 1/(1+g) decay",
         },
+    )
+
+
+def SS316(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="316L Stainless Steel",
+        G=G,
+        density=7.99,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+    )
+
+
+def Li4SiO4(
+    *,
+    sigma_t: np.ndarray,
+    sigma_a: np.ndarray,
+    sigma_dpa: np.ndarray,
+    energy_deposition: np.ndarray,
+    li6_enrichment: float = 0.076,
+    breeding_channels: dict[str, np.ndarray],
+) -> FusionMaterial:
+    """Production constructor requiring explicit vectors and breeding channels."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name=f"Li4SiO4 (Li-6 {li6_enrichment*100:.1f}%)",
+        G=G,
+        density=2.39,
+        is_breeder=True,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+        breeding_channels={k: np.asarray(v, dtype=np.float64) for k, v in breeding_channels.items()},
+    )
+
+
+def Beryllium(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="Beryllium",
+        G=G,
+        density=1.85,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
+    )
+
+
+def Tungsten(*, sigma_t: np.ndarray, sigma_a: np.ndarray, sigma_dpa: np.ndarray, energy_deposition: np.ndarray) -> FusionMaterial:
+    """Production constructor requiring explicit group-wise vectors."""
+    G = int(np.asarray(sigma_t).shape[0])
+    return FusionMaterial(
+        name="Tungsten (W)",
+        G=G,
+        density=19.3,
+        is_breeder=False,
+        sigma_t=np.asarray(sigma_t, dtype=np.float64),
+        sigma_a=np.asarray(sigma_a, dtype=np.float64),
+        sigma_dpa=np.asarray(sigma_dpa, dtype=np.float64),
+        energy_deposition=np.asarray(energy_deposition, dtype=np.float64),
     )

@@ -96,7 +96,9 @@ def run() -> FusionResults:
     print(f"  Groups:   G = {G}  (fast | epi | thermal)")
 
     # ── 2. Build D-T source ──────────────────────────────────────
-    Q_ext = make_dt_source(mesh, G=G, geometry="point", strength=STRENGTH)
+    src_map = np.zeros(G, dtype=np.float64)
+    src_map[0] = 1.0
+    Q_ext = make_dt_source(mesh, G=G, geometry="point", strength=STRENGTH, source_group_mapping=src_map)
     S_DT  = source_strength(Q_ext, mesh)
     print(f"  S_DT verified: {S_DT:.6e} n/s  (relative error = "
           f"{abs(S_DT - STRENGTH)/STRENGTH:.2e})")
@@ -122,9 +124,10 @@ def run() -> FusionResults:
     print("\n  Running fusion post-processing ...")
 
     # Primary structural material for heating / DPA
-    mat_fw  = SS316()
+    mat_fw  = SS316(sigma_t=np.array([0.282,0.520,0.890]), sigma_a=np.array([0.008,0.012,0.045]), sigma_dpa=np.array([0.045,0.018,0.003]), energy_deposition=np.array([6.50,2.10,0.80]))
     # Breeder material for TBR
-    mat_br  = Li4SiO4(li6_enrichment=0.076)   # natural enrichment
+    sigma_a_scaled = np.array([0.004,0.010,0.180])
+    mat_br  = Li4SiO4(sigma_t=np.array([0.148,0.212,0.480]), sigma_a=sigma_a_scaled, sigma_dpa=np.array([0.002,0.001,0.0003]), energy_deposition=np.array([4.80,1.50,4.78]), li6_enrichment=0.076, breeding_channels={"li6_breeding": sigma_a_scaled*np.array([0.0,1.0,1.0]), "li7_breeding": sigma_a_scaled*np.array([1.0,0.0,0.0])})   # natural enrichment
 
     fr = FusionResults.from_solver(
         phi       = phi,
@@ -137,7 +140,7 @@ def run() -> FusionResults:
     # ── 5. Li-6 / Li-7 isotopic split ────────────────────────────
     tbr_split = compute_tbr_components(
         phi                 = phi,
-        li6_enrichment      = 0.076,
+        li_material         = mat_br,
         mesh                = mesh,
         source_strength_val = S_DT,
     )
@@ -216,8 +219,19 @@ def show_material_library() -> None:
     print("  " + "-" * 80)
 
     from fusion.materials import SS316, Li4SiO4, Beryllium, Helium, Tungsten
-    for mat in [SS316(), Li4SiO4(), Li4SiO4(li6_enrichment=0.5),
-                Beryllium(), Helium(), Tungsten()]:
+    be = Beryllium(
+        sigma_t=np.array([0.421, 0.650, 0.780]),
+        sigma_a=np.array([0.002, 0.003, 0.006]),
+        sigma_dpa=np.array([0.030, 0.010, 0.001]),
+        energy_deposition=np.array([1.20, 0.50, 0.08]),
+    )
+    w = Tungsten(
+        sigma_t=np.array([0.650, 0.910, 1.280]),
+        sigma_a=np.array([0.030, 0.045, 0.080]),
+        sigma_dpa=np.array([0.085, 0.030, 0.006]),
+        energy_deposition=np.array([9.10, 3.20, 1.05]),
+    )
+    for mat in [mat_fw, mat_br, be, Helium(), w]:
         print(
             f"  {mat.name:30s}  {mat.sigma_t[0]:10.4f}  {mat.sigma_a[0]:10.4f}  "
             f"{mat.sigma_dpa[0]:12.4f}  {'yes' if mat.is_breeder else 'no':>7s}"
